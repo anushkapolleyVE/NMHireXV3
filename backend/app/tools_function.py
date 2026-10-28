@@ -3719,11 +3719,18 @@ def _send_whatsapp_payload(
     to a real candidate.
     """
 
-    url = getattr(
+    base_url = getattr(
         settings,
         "WHATSAPP_BASE_URL",
-        "https://nmve.io/whatsapp/api/integrations/whatsapp/template-messages",
+        "https://nmve.io/whatsapp/api/integrations/whatsapp/messages",
     )
+
+    # Text messages (CTA scheduling link, meeting link) MUST go to /messages.
+    # NMVE rejects text messages at /template-messages with validation error.
+    if payload.get("type") == "text" or "templateName" not in payload:
+        url = base_url.replace("/template-messages", "/messages")
+    else:
+        url = base_url
 
     api_key = getattr(
         settings,
@@ -4562,13 +4569,19 @@ def handle_whatsapp_webhook(
     inbound.response_intent = intent
     db.commit()
 
+    target_phone = phone
+    if not target_phone and job_candidate:
+        cand = db.get(Candidate, job_candidate.candidate_id)
+        if cand and cand.phone:
+            target_phone = cand.phone
+
     if intent == "INTERESTED":
-        print(f"WEBHOOK: Candidate is INTERESTED, updating status and sending CTA...")
+        print(f"WEBHOOK: Candidate is INTERESTED, updating status and sending CTA to {target_phone}...")
         job_candidate.recruitment_status = "INTERESTED"
         db.commit()
 
         sent = _send_whatsapp_cta_message(
-            raw_phone=phone,
+            raw_phone=target_phone,
             job_candidate_id=str(job_candidate.id),
         )
         print(f"WEBHOOK: CTA send result = {sent}")
@@ -4597,7 +4610,7 @@ def handle_whatsapp_webhook(
             "will keep your profile in mind for future opportunities. Best wishes!"
         )
         sent = _send_whatsapp_text_message(
-            raw_phone=phone,
+            raw_phone=target_phone,
             text_message=ack_msg,
         )
         db.add(
@@ -4619,7 +4632,7 @@ def handle_whatsapp_webhook(
             "in proceeding with the opportunity, or NO if you are not interested."
         )
         sent = _send_whatsapp_text_message(
-            raw_phone=phone,
+            raw_phone=target_phone,
             text_message=clarification,
         )
         db.add(
