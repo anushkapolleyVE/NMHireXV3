@@ -4163,6 +4163,7 @@ def _send_whatsapp_text_message(
             "type": "text",
             "text": {
                 "body": text_message,
+                "preview_url": True,
             },
         }
 
@@ -4219,9 +4220,9 @@ def _send_whatsapp_cta_message(
 
     text_message = (
         "Great news! 🎉 We'd love to move forward with your application.\n\n"
-        "Please schedule your interview at a convenient date and time within the next 7 days.\n\n"
-        f"Tap the link below to select your preferred date and time:\n"
-        f"👉 {scheduling_link}\n\n"
+        "Please select your preferred date and time for the interview using the link below:\n\n"
+        f"{scheduling_link}\n\n"
+        "💡 *Note:* If the link above is not clickable, please save this number to your contacts or tap 'Add to contacts' at the top of the chat.\n\n"
         "We look forward to connecting with you! 😊"
     )
 
@@ -4688,16 +4689,16 @@ def schedule_candidate_interview(
     candidate = db.get(Candidate, job_candidate.candidate_id)
 
     date_text = scheduled_at.strftime("%d %b %Y, %I:%M %p")
-    frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+    frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
     reschedule_link = f"{frontend_url}/reschedule/{job_candidate.reschedule_token}"
     
     message = (
         "Your interview has been scheduled successfully! 🎉\n\n"
-        f"Date & Time: {date_text}\n"
+        f"📅 Date & Time: {date_text}\n"
     )
     if interview_link:
-        message += f"\nInterview Link:\n{interview_link}\n"
-    message += f"\nNeed to pick a new time? Reschedule here:\n{reschedule_link}\n"
+        message += f"\n🔗 Interview Link:\n{interview_link}\n"
+    message += f"\n🔄 Need to pick a new time? Reschedule here:\n{reschedule_link}\n"
     message += "\nPlease be available a few minutes before the scheduled time."
 
     sent = _send_whatsapp_text_message(
