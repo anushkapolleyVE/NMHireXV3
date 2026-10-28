@@ -5,7 +5,7 @@ backend/.env
 frontend/.env
 *.env.local
 *.env.*.local
-*.env.example
+!.env.example
 # Python
 __pycache__/
 *.py[cod]
