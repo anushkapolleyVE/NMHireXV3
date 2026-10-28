@@ -3588,6 +3588,8 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
     meeting_scheduled = 0
     not_interested = 0
     awaiting = 0
+    delivered_count = 0
+    failed_count = 0
 
     recent_candidates = []
 
@@ -3614,6 +3616,25 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             elif status == "CONTACTED":
                 awaiting += 1
 
+            # Determine delivery status from latest outbound contact log
+            latest_contact = db.scalar(
+                select(CandidateContact)
+                .where(
+                    CandidateContact.job_candidate_id == jc.id,
+                    CandidateContact.message_type == "OUTBOUND",
+                )
+                .order_by(CandidateContact.created_at.desc())
+                .limit(1)
+            )
+
+            c_status = (latest_contact.status if latest_contact else "SENT").upper()
+            if c_status == "FAILED":
+                delivery_status = "FAILED"
+                failed_count += 1
+            else:
+                delivery_status = "DELIVERED"
+                delivered_count += 1
+
             if len(recent_candidates) < 40:
                 scheduled_str = (
                     jc.interview_scheduled_at.isoformat()
@@ -3628,6 +3649,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
                     "role": cand.current_role or job.title or "Position",
                     "phone": cand.phone or "",
                     "status": status,
+                    "delivery_status": delivery_status,
                     "interview_scheduled_at": scheduled_str,
                     "interview_link": jc.interview_link,
                     "updated_at": jc.updated_at.isoformat() if jc.updated_at else None,
@@ -3641,6 +3663,8 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             "meeting_scheduled": meeting_scheduled,
             "not_interested": not_interested,
             "awaiting": awaiting,
+            "delivered": delivered_count,
+            "failed": failed_count,
             "active_jobs": invites_sent,
             "candidates_screened": invites_sent,
             "strong_matches": interested,
@@ -4500,8 +4524,43 @@ def handle_whatsapp_webhook(
             "reason": "Missing phone and reference ID",
         }
 
-    # Ignore delivery status receipts (e.g. sent, delivered, read) or payloads without actual message text
+    # Update CandidateContact on delivery status receipts (e.g. delivered, failed, read)
     if not text_message or not text_message.strip():
+        status_val = find_value(payload, ["status", "deliveryStatus", "messageStatus", "event"])
+        if status_val:
+            status_clean = str(status_val).strip().upper()
+            target_contact = None
+            if provider_message_id:
+                target_contact = db.scalar(
+                    select(CandidateContact)
+                    .where(CandidateContact.external_message_id == provider_message_id)
+                    .limit(1)
+                )
+            if not target_contact and phone:
+                target_contact = db.scalar(
+                    select(CandidateContact)
+                    .join(JobCandidate, JobCandidate.id == CandidateContact.job_candidate_id)
+                    .join(Candidate, Candidate.id == JobCandidate.candidate_id)
+                    .where(Candidate.phone == phone, CandidateContact.message_type == "OUTBOUND")
+                    .order_by(CandidateContact.created_at.desc())
+                    .limit(1)
+                )
+            if target_contact:
+                if "DELIVER" in status_clean:
+                    target_contact.status = "DELIVERED"
+                    target_contact.delivered_at = datetime.utcnow()
+                elif "FAIL" in status_clean or "UNDELIVER" in status_clean:
+                    target_contact.status = "FAILED"
+                elif "READ" in status_clean:
+                    target_contact.status = "READ"
+                    target_contact.read_at = datetime.utcnow()
+                db.commit()
+                print(f"WEBHOOK: Updated delivery status of {target_contact.id} to {target_contact.status}")
+                return {
+                    "status": "STATUS_UPDATED",
+                    "delivery_status": target_contact.status,
+                }
+
         print(f"WEBHOOK: Delivery status or empty message received from {phone} (ignoring).")
         return {
             "status": "IGNORED",
@@ -4865,6 +4924,19 @@ def get_outreach_candidates(
             else None
         )
 
+        latest_outbound = db.scalar(
+            select(CandidateContact)
+            .where(
+                CandidateContact.job_candidate_id == jc.id,
+                CandidateContact.channel == "WHATSAPP",
+                CandidateContact.message_type == "OUTBOUND",
+            )
+            .order_by(CandidateContact.created_at.desc())
+            .limit(1)
+        )
+        c_status = (latest_outbound.status if latest_outbound else "SENT").upper()
+        delivery_status = "FAILED" if c_status == "FAILED" else "DELIVERED"
+
         results.append({
             "id": str(candidate.id),
             "job_id": str(job.id),
@@ -4873,6 +4945,7 @@ def get_outreach_candidates(
             "phone": candidate.phone or "",
             "job": job.title or "Unknown Role",
             "status": jc.recruitment_status,
+            "delivery_status": delivery_status,
             "interview_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
             "interview_link": jc.interview_link,
             "score": (

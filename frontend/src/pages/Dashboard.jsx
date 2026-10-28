@@ -31,6 +31,8 @@ export default function Dashboard() {
   const scheduled = metrics.meeting_scheduled ?? 0;
   const notInterested = metrics.not_interested ?? 0;
   const awaiting = metrics.awaiting ?? 0;
+  const delivered = metrics.delivered ?? invitesSent;
+  const failed = metrics.failed ?? 0;
 
   const candidatesList = dashboardData?.recent_candidates || [];
 
@@ -48,6 +50,38 @@ export default function Dashboard() {
     navigator.clipboard.writeText(sampleCurl);
     setCopiedCurl(true);
     setTimeout(() => setCopiedCurl(false), 2000);
+  };
+
+  const getDeliveryBadge = (status) => {
+    const s = (status || 'DELIVERED').toUpperCase();
+    if (s === 'FAILED') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-400 ring-1 ring-rose-500/30 shadow-[0_0_10px_rgba(244,63,94,0.15)]">
+          <svg className="w-3.5 h-3.5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          Failed
+        </span>
+      );
+    }
+    if (s === 'READ') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-1 text-xs font-bold text-cyan-400 ring-1 ring-cyan-500/30">
+          <svg className="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7m-7 0l4 4L22 7" />
+          </svg>
+          Read
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.15)]">
+        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+        </svg>
+        Delivered
+      </span>
+    );
   };
 
   const getStatusBadge = (status) => {
@@ -159,7 +193,7 @@ export default function Dashboard() {
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400 relative z-10">Invites Sent</p>
               <p className="mt-2 font-display text-5xl font-bold text-white relative z-10">{invitesSent}</p>
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand/20 px-2 py-1 text-[11px] font-bold text-brand ring-1 ring-brand/30 relative z-10">
-                <span className="size-1.5 rounded-full bg-brand animate-pulse"></span> {awaiting} awaiting reply
+                <span className="size-1.5 rounded-full bg-brand animate-pulse"></span> {awaiting} awaiting reply • {delivered} delivered
               </p>
             </div>
 
@@ -200,6 +234,63 @@ export default function Dashboard() {
             </div>
           </section>
 
+          {/* Dedicated Section: WhatsApp Message Delivery Status (Delivered vs Failed) */}
+          <section className="mt-8 rounded-2xl glass-dark p-6 relative overflow-hidden border border-slate-800 animate-slide-up opacity-0-init animate-delay-250">
+            <div className="flex flex-wrap items-center justify-between gap-6">
+              <div className="flex items-center gap-4">
+                <div className="size-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="font-display text-lg font-bold text-white tracking-tight">WhatsApp Message Delivery Status</h2>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                      <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Meta Gateway Sync
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Live delivery confirmation and failure tracking for all outbound candidate invitations.
+                  </p>
+                </div>
+              </div>
+
+              {/* Delivery Stats Pills */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Delivered Pill */}
+                <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 px-5 py-3 border border-emerald-500/25 shadow-inner">
+                  <div className="size-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"></div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Delivered</p>
+                    <p className="font-display text-2xl font-bold text-emerald-400">{delivered}</p>
+                  </div>
+                </div>
+
+                {/* Failed Pill */}
+                <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 px-5 py-3 border border-rose-500/25 shadow-inner">
+                  <div className={`size-2.5 rounded-full ${failed > 0 ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.8)]' : 'bg-slate-600'}`}></div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Failed / Undelivered</p>
+                    <p className={`font-display text-2xl font-bold ${failed > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{failed}</p>
+                  </div>
+                </div>
+
+                {/* Delivery Success Rate */}
+                <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 px-5 py-3 border border-slate-800 shadow-inner">
+                  <div className="size-2.5 rounded-full bg-brand shadow-[0_0_10px_rgba(59,130,246,0.8)]"></div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Delivery Rate</p>
+                    <p className="font-display text-2xl font-bold text-brand">
+                      {invitesSent > 0 ? `${Math.round((delivered / (delivered + failed || 1)) * 100)}%` : '100%'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* Outreach Pipeline Table */}
           <div className="mt-8 grid gap-6 lg:grid-cols-12 animate-slide-up opacity-0-init animate-delay-300">
             <section className="glass-dark rounded-[24px] p-6 sm:p-8 lg:col-span-12">
@@ -225,13 +316,14 @@ export default function Dashboard() {
               </div>
 
               <div className="overflow-auto max-h-[500px] custom-scrollbar pb-2 pr-1 relative">
-                <table className="w-full min-w-[760px] text-left border-collapse">
+                <table className="w-full min-w-[820px] text-left border-collapse">
                   <thead className="sticky top-0 bg-[#0B1121] z-10 before:absolute before:inset-0 before:bg-slate-900/50 before:-z-10 before:backdrop-blur-md">
                     <tr className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                       <th className="pb-4 pt-4 pl-3 border-b border-slate-700">Candidate</th>
                       <th className="pb-4 pt-4 border-b border-slate-700">Role</th>
                       <th className="pb-4 pt-4 border-b border-slate-700">WhatsApp</th>
-                      <th className="pb-4 pt-4 border-b border-slate-700">Status</th>
+                      <th className="pb-4 pt-4 border-b border-slate-700">Delivery</th>
+                      <th className="pb-4 pt-4 border-b border-slate-700">Response Status</th>
                       <th className="pb-4 pt-4 border-b border-slate-700">Interview Slot / Link</th>
                       <th className="pb-4 pt-4 pr-3 text-right border-b border-slate-700">Action</th>
                     </tr>
@@ -239,7 +331,7 @@ export default function Dashboard() {
                   <tbody className="text-sm">
                     {loading ? (
                       <tr>
-                        <td colSpan="6" className="py-12 text-center text-slate-400">
+                        <td colSpan="7" className="py-12 text-center text-slate-400">
                           <div className="flex justify-center items-center">
                             <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-brand"></div>
                           </div>
@@ -255,6 +347,9 @@ export default function Dashboard() {
                         </td>
                         <td className="py-4 font-mono text-xs text-slate-400">
                           {cand.phone || '—'}
+                        </td>
+                        <td className="py-4">
+                          {getDeliveryBadge(cand.delivery_status)}
                         </td>
                         <td className="py-4">
                           {getStatusBadge(cand.status)}

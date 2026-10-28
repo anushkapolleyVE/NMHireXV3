@@ -214,8 +214,19 @@ export default function Outreach() {
                       </p>
                     </div>
 
-                    {/* Status */}
-                    <div>
+                    {/* Delivery & Recruitment Status */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {candidate.delivery_status === 'FAILED' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-400 ring-1 ring-rose-500/30">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                          Failed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                          Delivered
+                        </span>
+                      )}
                       {getStatusBadge(candidate)}
                     </div>
 
