@@ -4488,7 +4488,7 @@ def handle_whatsapp_webhook(
     phone = _clean_whatsapp_phone(
         find_value(
             payload,
-            ["from", "phone", "sender", "wa_id", "waId", "phoneNumber", "fromNumber"],
+            ["to", "from", "phone", "sender", "wa_id", "waId", "phoneNumber", "fromNumber", "recipient_id"],
         )
     )
 
@@ -4536,6 +4536,20 @@ def handle_whatsapp_webhook(
                     .where(CandidateContact.external_message_id == provider_message_id)
                     .limit(1)
                 )
+            if not target_contact and reference_id and reference_id.startswith("NMHireX-"):
+                ref_jc_id = reference_id.replace("NMHireX-", "").strip()
+                try:
+                    target_contact = db.scalar(
+                        select(CandidateContact)
+                        .where(
+                            CandidateContact.job_candidate_id == UUID(ref_jc_id),
+                            CandidateContact.message_type == "OUTBOUND",
+                        )
+                        .order_by(CandidateContact.created_at.desc())
+                        .limit(1)
+                    )
+                except (ValueError, TypeError):
+                    target_contact = None
             if not target_contact and phone:
                 target_contact = db.scalar(
                     select(CandidateContact)
@@ -4551,15 +4565,40 @@ def handle_whatsapp_webhook(
                     target_contact.delivered_at = datetime.utcnow()
                 elif "FAIL" in status_clean or "UNDELIVER" in status_clean:
                     target_contact.status = "FAILED"
+                    err_msg = find_value(payload, ["errorMessage", "error", "error_message", "reason"]) or "Delivery failed"
+                    target_contact.message = f"Failed: {err_msg}"
                 elif "READ" in status_clean:
                     target_contact.status = "READ"
                     target_contact.read_at = datetime.utcnow()
                 db.commit()
-                print(f"WEBHOOK: Updated delivery status of {target_contact.id} to {target_contact.status}")
+                print(f"WEBHOOK: Updated delivery status of contact {target_contact.id} to {target_contact.status}")
                 return {
                     "status": "STATUS_UPDATED",
                     "delivery_status": target_contact.status,
                 }
+            elif reference_id and reference_id.startswith("NMHireX-"):
+                ref_jc_id = reference_id.replace("NMHireX-", "").strip()
+                try:
+                    jc_uuid = UUID(ref_jc_id)
+                    err_msg = find_value(payload, ["errorMessage", "error", "error_message"]) or "Delivery failed"
+                    new_contact = CandidateContact(
+                        job_candidate_id=jc_uuid,
+                        channel="WHATSAPP",
+                        message_type="OUTBOUND",
+                        message=f"Failed: {err_msg}",
+                        provider="NMVE",
+                        external_message_id=provider_message_id,
+                        status="FAILED" if ("FAIL" in status_clean or "UNDELIVER" in status_clean) else "DELIVERED",
+                        sent_at=datetime.utcnow(),
+                    )
+                    db.add(new_contact)
+                    db.commit()
+                    return {
+                        "status": "STATUS_CREATED",
+                        "delivery_status": new_contact.status,
+                    }
+                except (ValueError, TypeError):
+                    pass
 
         print(f"WEBHOOK: Delivery status or empty message received from {phone} (ignoring).")
         return {
