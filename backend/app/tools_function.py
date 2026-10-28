@@ -3722,7 +3722,7 @@ def _send_whatsapp_payload(
     url = getattr(
         settings,
         "WHATSAPP_BASE_URL",
-        "https://nmve.io/whatsapp/api/integrations/whatsapp/messages",
+        "https://nmve.io/whatsapp/api/integrations/whatsapp/template-messages",
     )
 
     api_key = getattr(
