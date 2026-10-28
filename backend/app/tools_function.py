@@ -4214,6 +4214,10 @@ def _send_whatsapp_cta_message(
         "https://nm-hire-xv-3-c4m5.vercel.app",
     ).rstrip("/")
 
+    # WhatsApp candidates cannot access localhost; always use public Vercel domain
+    if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
+        frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
+
     scheduling_link = (
         f"{frontend_url}/schedule/{job_candidate_id}"
     )
@@ -4690,6 +4694,8 @@ def schedule_candidate_interview(
 
     date_text = scheduled_at.strftime("%d %b %Y, %I:%M %p")
     frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
+    if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
+        frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
     reschedule_link = f"{frontend_url}/reschedule/{job_candidate.reschedule_token}"
     
     message = (
