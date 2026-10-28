@@ -3722,7 +3722,7 @@ def _send_whatsapp_payload(
     base_url = getattr(
         settings,
         "WHATSAPP_BASE_URL",
-        "https://nmve.io/whatsapp/api/integrations/whatsapp/messages",
+        "https://nmve.io/whatsapp/api/integrations/whatsapp/template-messages",
     )
 
     # Text messages (CTA scheduling link, meeting link) MUST go to /messages.
@@ -4029,7 +4029,7 @@ def _send_whatsapp_to_candidate(
         callback_url = getattr(
             settings,
             "WHATSAPP_CALLBACK_URL",
-            "https://nmhirex.onrender.com/api/webhooks/whatsapp",
+            "https://nmhirexv3.onrender.com/api/webhooks/whatsapp",
         )
 
         template_name = getattr(
@@ -4210,7 +4210,7 @@ def _send_whatsapp_cta_message(
     frontend_url = getattr(
         settings,
         "FRONTEND_URL",
-        "https://nm-hire-xv-2new.vercel.app",
+        "https://nm-hire-xv-3-c4m5.vercel.app",
     ).rstrip("/")
 
     scheduling_link = (
