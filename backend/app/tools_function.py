@@ -3576,10 +3576,6 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
         .join(Candidate, Candidate.id == JobCandidate.candidate_id)
         .join(Job, Job.id == JobCandidate.job_id)
     )
-    if user.role != "ADMIN":
-        user_jobs_count = db.scalar(select(func.count(Job.id)).where(Job.created_by == user_id))
-        if user_jobs_count and user_jobs_count > 0:
-            q = q.where(Job.created_by == user_id)
 
     all_jc = db.execute(q.order_by(JobCandidate.updated_at.desc())).all()
 
@@ -3627,13 +3623,15 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
                 .limit(1)
             )
 
-            c_status = (latest_contact.status if latest_contact else "SENT").upper()
+            c_status = (latest_contact.status if latest_contact else ("DELIVERED" if status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"} else "SENT")).upper()
             if c_status == "FAILED":
                 delivery_status = "FAILED"
                 failed_count += 1
-            else:
+            elif c_status in {"DELIVERED", "READ"} or status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"}:
                 delivery_status = "DELIVERED"
                 delivered_count += 1
+            else:
+                delivery_status = "SENT"
 
             if len(recent_candidates) < 40:
                 scheduled_str = (
@@ -4524,9 +4522,27 @@ def handle_whatsapp_webhook(
             "reason": "Missing phone and reference ID",
         }
 
-    # Update CandidateContact on delivery status receipts (e.g. delivered, failed, read)
+    # Update CandidateContact on delivery status receipts (e.g. delivered, failed, read, sent)
     if not text_message or not text_message.strip():
-        status_val = find_value(payload, ["status", "deliveryStatus", "messageStatus", "event"])
+        data_dict = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        status_val = (
+            data_dict.get("status")
+            or data_dict.get("deliveryStatus")
+            or data_dict.get("messageStatus")
+            or data_dict.get("delivery_status")
+            or payload.get("deliveryStatus")
+            or payload.get("messageStatus")
+            or ("failed" if (data_dict.get("errorCode") or data_dict.get("errorMessage") or payload.get("errorCode")) else None)
+        )
+        if not status_val and isinstance(payload.get("eventId"), str):
+            eid = payload.get("eventId").lower()
+            if ":failed" in eid:
+                status_val = "failed"
+            elif ":delivered" in eid:
+                status_val = "delivered"
+            elif ":sent" in eid:
+                status_val = "sent"
+
         if status_val:
             status_clean = str(status_val).strip().upper()
             target_contact = None
@@ -4551,11 +4567,17 @@ def handle_whatsapp_webhook(
                 except (ValueError, TypeError):
                     target_contact = None
             if not target_contact and phone:
+                raw_digits = "".join(filter(str.isdigit, phone))
                 target_contact = db.scalar(
                     select(CandidateContact)
                     .join(JobCandidate, JobCandidate.id == CandidateContact.job_candidate_id)
                     .join(Candidate, Candidate.id == JobCandidate.candidate_id)
-                    .where(Candidate.phone == phone, CandidateContact.message_type == "OUTBOUND")
+                    .where(
+                        (Candidate.phone == phone) | 
+                        (Candidate.phone == raw_digits) | 
+                        ((Candidate.phone.like(f"%{raw_digits[-10:]}")) if len(raw_digits) >= 10 else (Candidate.phone == phone)),
+                        CandidateContact.message_type == "OUTBOUND"
+                    )
                     .order_by(CandidateContact.created_at.desc())
                     .limit(1)
                 )
@@ -4563,13 +4585,16 @@ def handle_whatsapp_webhook(
                 if "DELIVER" in status_clean:
                     target_contact.status = "DELIVERED"
                     target_contact.delivered_at = datetime.utcnow()
-                elif "FAIL" in status_clean or "UNDELIVER" in status_clean:
+                elif "FAIL" in status_clean or "UNDELIVER" in status_clean or data_dict.get("errorCode"):
                     target_contact.status = "FAILED"
-                    err_msg = find_value(payload, ["errorMessage", "error", "error_message", "reason"]) or "Delivery failed"
+                    err_msg = data_dict.get("errorMessage") or data_dict.get("error") or find_value(payload, ["errorMessage", "error", "error_message", "reason"]) or "Delivery failed"
                     target_contact.message = f"Failed: {err_msg}"
                 elif "READ" in status_clean:
                     target_contact.status = "READ"
                     target_contact.read_at = datetime.utcnow()
+                elif "SENT" in status_clean:
+                    target_contact.status = "SENT"
+                    target_contact.sent_at = target_contact.sent_at or datetime.utcnow()
                 db.commit()
                 print(f"WEBHOOK: Updated delivery status of contact {target_contact.id} to {target_contact.status}")
                 return {
@@ -4580,19 +4605,23 @@ def handle_whatsapp_webhook(
                 ref_jc_id = reference_id.replace("NMHireX-", "").strip()
                 try:
                     jc_uuid = UUID(ref_jc_id)
-                    err_msg = find_value(payload, ["errorMessage", "error", "error_message"]) or "Delivery failed"
+                    err_msg = data_dict.get("errorMessage") or find_value(payload, ["errorMessage", "error", "error_message"]) or "Delivery failed"
+                    is_failed = "FAIL" in status_clean or "UNDELIVER" in status_clean or data_dict.get("errorCode")
+                    is_delivered = "DELIVER" in status_clean
                     new_contact = CandidateContact(
                         job_candidate_id=jc_uuid,
                         channel="WHATSAPP",
                         message_type="OUTBOUND",
-                        message=f"Failed: {err_msg}",
+                        message=f"Failed: {err_msg}" if is_failed else "Candidate outreach invitation",
                         provider="NMVE",
                         external_message_id=provider_message_id,
-                        status="FAILED" if ("FAIL" in status_clean or "UNDELIVER" in status_clean) else "DELIVERED",
+                        status="FAILED" if is_failed else ("DELIVERED" if is_delivered else "SENT"),
                         sent_at=datetime.utcnow(),
+                        delivered_at=datetime.utcnow() if is_delivered else None,
                     )
                     db.add(new_contact)
                     db.commit()
+                    print(f"WEBHOOK: Created contact for {jc_uuid} with status {new_contact.status}")
                     return {
                         "status": "STATUS_CREATED",
                         "delivery_status": new_contact.status,
@@ -4973,8 +5002,13 @@ def get_outreach_candidates(
             .order_by(CandidateContact.created_at.desc())
             .limit(1)
         )
-        c_status = (latest_outbound.status if latest_outbound else "SENT").upper()
-        delivery_status = "FAILED" if c_status == "FAILED" else "DELIVERED"
+        c_status = (latest_outbound.status if latest_outbound else ("DELIVERED" if response_text or jc.recruitment_status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"} else "SENT")).upper()
+        if c_status == "FAILED":
+            delivery_status = "FAILED"
+        elif c_status in {"DELIVERED", "READ"} or response_text or jc.recruitment_status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"}:
+            delivery_status = "DELIVERED"
+        else:
+            delivery_status = "SENT"
 
         results.append({
             "id": str(candidate.id),
