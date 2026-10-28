@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="error-overlay" style="position: fixed; top: 0; left: 0; width: 100%; background: red; color: white; z-index: 9999; padding: 20px; display: none; white-space: pre-wrap;"></div>
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        const overlay = document.getElementById('error-overlay');
+        overlay.style.display = 'block';
+        overlay.innerText += 'Error: ' + msg + '\n' + (error ? error.stack : '') + '\n\n';
+      };
+      window.addEventListener('unhandledrejection', function(event) {
+        const overlay = document.getElementById('error-overlay');
+        overlay.style.display = 'block';
+        overlay.innerText += 'Unhandled Promise Rejection: ' + event.reason + '\n\n';
+      });
+      const originalConsoleError = console.error;
+      console.error = function(...args) {
+        const overlay = document.getElementById('error-overlay');
+        overlay.style.display = 'block';
+        overlay.innerText += 'Console Error: ' + args.join(' ') + '\n\n';
+        originalConsoleError.apply(console, args);
+      };
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

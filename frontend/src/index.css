@@ -1,0 +1,172 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-sans;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.02'/%3E%3C/svg%3E");
+  }
+}
+
+@layer components {
+  .glass-dark {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .glass-dark-card:hover {
+    transform: translateY(-4px);
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4), 0 0 20px 0 rgba(59, 130, 246, 0.1);
+  }
+
+  .glow-bg {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(20, 184, 166, 0.05) 40%, rgba(2, 6, 23, 0) 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(40px);
+  }
+
+  /* specific to dashboard */
+  .glow-bg-large {
+    position: absolute;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, rgba(20, 184, 166, 0.05) 40%, rgba(2, 6, 23, 0) 70%);
+    filter: blur(60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .input-dark {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 0.2s ease;
+    @apply text-ink;
+  }
+
+  .input-dark:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: rgba(30, 41, 59, 0.9);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  }
+
+  .btn-neon {
+    background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-neon::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+  }
+
+  .btn-neon:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.6);
+  }
+
+  .btn-neon:hover::before {
+    left: 100%;
+  }
+
+  .table-row-hover {
+    transition: all 0.2s ease;
+  }
+
+  .table-row-hover:hover {
+    background-color: rgba(30, 41, 59, 0.8);
+    transform: scale(1.005);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .nav-link {
+    transition: all 0.2s ease;
+  }
+
+  .nav-link:hover {
+    background: rgba(255, 255, 255, 0.05);
+    @apply text-ink;
+  }
+
+  .dropzone-dark {
+    border: 2px dashed rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.05);
+    transition: all 0.3s ease;
+  }
+
+  .dropzone-dark:hover {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.8);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+  }
+
+  .candidate-card {
+    transition: all 0.3s ease;
+  }
+
+  .candidate-card:hover {
+    transform: translateY(-4px);
+  }
+
+  .details-panel {
+    transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out, padding 0.3s ease-in-out;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+  }
+
+  .details-panel.open {
+    max-height: 200px;
+    opacity: 1;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+    margin-top: 0.75rem;
+  }
+}
+
+@layer utilities {
+  .animate-delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .animate-delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .animate-delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .animate-delay-400 { animation-delay: 400ms; }
+  .animate-delay-500 { animation-delay: 500ms; }
+  
+  .inset-shadow {
+    box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);
+  }
+}
