@@ -37,15 +37,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from .config import settings
+
+cors_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "https://nm-hire-x.vercel.app",
+    "https://nm-hire-x-omega.vercel.app",
+    "https://nm-hire-xv-2new.vercel.app",
+]
+if settings.FRONTEND_URL and settings.FRONTEND_URL not in cors_origins:
+    cors_origins.append(settings.FRONTEND_URL.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "https://nm-hire-x.vercel.app",
-        "https://nm-hire-x-omega.vercel.app",
-        "https://nm-hire-xv-2new.vercel.app",
-    ],
+    allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: nmhirex-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: WHATSAPP_API_KEY
+        sync: false
+      - key: WHATSAPP_BASE_URL
+        value: https://nmve.io/whatsapp/api/integrations/whatsapp/messages
+      - key: WHATSAPP_STAGE_NUMBER
+        value: "7439717970"
+      - key: WHATSAPP_CALLBACK_URL
+        sync: false
+      - key: WHATSAPP_TEMPLATE_NAME
+        value: candidate_shortlisted_outreach
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: en
+      - key: WHATSAPP_COMPANY_NAME
+        value: Acme
+      - key: WHATSAPP_TEST_MODE
+        value: "false"

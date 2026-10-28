@@ -15,8 +15,13 @@ from .config import settings
 # psycopg2-binary is already part of the project's dependencies.
 # ------------------------------------------------------------
 
+# Ensure postgres:// URL scheme is compatible with SQLAlchemy
+raw_db_url = settings.DATABASE_URL
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    raw_db_url,
     pool_pre_ping=True,
 )
 

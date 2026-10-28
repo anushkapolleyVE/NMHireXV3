@@ -33,9 +33,9 @@ export default function SyncResumeModal({ isOpen, onClose }) {
     }
 
     try {
-  // Send request to backend
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace(/\/+$/, '');
   const res = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/resumes/sync`,
+    `${apiBase}/resumes/sync`,
     {
       method: 'POST',
       headers: {
