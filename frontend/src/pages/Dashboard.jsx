@@ -217,7 +217,7 @@ export default function Dashboard() {
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400 relative z-10">Interested</p>
               <p className="mt-2 font-display text-5xl font-bold text-emerald-400 relative z-10">{interested}</p>
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2 py-1 text-[11px] font-bold text-emerald-300 ring-1 ring-emerald-500/30 relative z-10">
-                <span className="size-1.5 rounded-full bg-emerald-400"></span> Link sent to schedule
+                <span className="size-1.5 rounded-full bg-emerald-400"></span> Replied interested
               </p>
             </div>
 

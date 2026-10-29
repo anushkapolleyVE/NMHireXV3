@@ -3603,8 +3603,9 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
 
         if has_outreach:
             invites_sent += 1
-            if status == "INTERVIEW_SCHEDULED" or jc.interview_scheduled_at is not None:
+            if status in {"INTERVIEW_SCHEDULED", "INTERVIEW", "INTERVIEW_COMPLETED"} or jc.interview_scheduled_at is not None:
                 meeting_scheduled += 1
+                interested += 1
             elif status in {"INTERESTED", "INTERVIEW_LINK_SENT"}:
                 interested += 1
             elif status == "NOT_INTERESTED":
