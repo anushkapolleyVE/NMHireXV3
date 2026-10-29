@@ -12,7 +12,9 @@ export default function Outreach() {
         const data = await getOutreachData();
 
         if (data && Array.isArray(data)) {
-          setCandidates(data);
+          // Only show delivered candidates (replied and awaiting) - failed are tracked on Dashboard
+          const deliveredOnly = data.filter(c => c.delivery_status !== 'FAILED');
+          setCandidates(deliveredOnly);
         }
       } catch (err) {
         console.error('Failed to fetch outreach data', err);
@@ -216,22 +218,10 @@ export default function Outreach() {
 
                     {/* Delivery & Recruitment Status */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      {candidate.delivery_status === 'FAILED' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-400 ring-1 ring-rose-500/30">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-                          Failed
-                        </span>
-                      ) : candidate.delivery_status === 'SENT' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2.5 py-1 text-xs font-bold text-blue-400 ring-1 ring-blue-500/30">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                          Sent
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
-                          Delivered
-                        </span>
-                      )}
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                        Delivered
+                      </span>
                       {getStatusBadge(candidate)}
                     </div>
 

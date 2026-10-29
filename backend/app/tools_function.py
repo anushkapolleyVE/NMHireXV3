@@ -5010,6 +5010,10 @@ def get_outreach_candidates(
         else:
             delivery_status = "SENT"
 
+        # Exclude failed outreach invitations - failed candidates are only tracked on the Dashboard
+        if delivery_status == "FAILED":
+            continue
+
         results.append({
             "id": str(candidate.id),
             "job_id": str(job.id),
