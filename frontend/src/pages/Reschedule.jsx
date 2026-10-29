@@ -192,7 +192,10 @@ const Reschedule = () => {
   const formatCurrentSchedule = (isoDate) => {
     if (!isoDate) return 'Not Scheduled';
     try {
-      return new Date(isoDate).toLocaleString('en-US', {
+      // Strip any UTC / timezone suffix so the candidate's exact scheduled clock time is preserved
+      const clean = isoDate.replace(/(\.\d+)?(Z|[+-]\d{2}:\d{2})$/, '');
+      const d = new Date(clean);
+      return d.toLocaleString('en-US', {
         dateStyle: 'full',
         timeStyle: 'short'
       });

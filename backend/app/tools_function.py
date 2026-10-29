@@ -3635,7 +3635,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
 
             if len(recent_candidates) < 40:
                 scheduled_str = (
-                    jc.interview_scheduled_at.isoformat()
+                    jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
                     if jc.interview_scheduled_at
                     else None
                 )
@@ -4882,7 +4882,7 @@ def schedule_candidate_interview(
     return {
         "job_candidate_id": str(job_candidate.id),
         "candidate_id": str(job_candidate.candidate_id),
-        "scheduled_at": scheduled_at.isoformat(),
+        "scheduled_at": scheduled_at.strftime("%Y-%m-%dT%H:%M:%S"),
         "interview_link": interview_link,
         "status": job_candidate.recruitment_status,
         "confirmation_sent": sent,
@@ -4921,7 +4921,7 @@ def update_interview_status(
         "candidate_id": str(job_candidate.candidate_id),
         "status": job_candidate.recruitment_status,
         "interview_scheduled_at": (
-            job_candidate.interview_scheduled_at.isoformat()
+            job_candidate.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
             if job_candidate.interview_scheduled_at
             else None
         ),
@@ -5036,7 +5036,11 @@ def get_outreach_candidates(
             "status": jc.recruitment_status,
             "delivery_status": delivery_status,
             "error_message": latest_outbound.message if (latest_outbound and c_status == "FAILED") else None,
-            "interview_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
+            "interview_scheduled_at": (
+                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                if jc.interview_scheduled_at
+                else None
+            ),
             "interview_link": jc.interview_link,
             "score": (
                 float(jc.overall_score)
@@ -5251,7 +5255,11 @@ def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
             ),
             "stage": jc.recruitment_status,
             "interview_link": jc.interview_link or interview_link,
-            "interview_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
+            "interview_scheduled_at": (
+                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                if jc.interview_scheduled_at
+                else None
+            ),
             "experience_details": (
                 candidate.normalized_profile.get(
                     "experiences", []

@@ -5,7 +5,9 @@ import Header from '../components/Header';
 const formatScheduledTime = (isoStr) => {
   if (!isoStr) return null;
   try {
-    const d = new Date(isoStr);
+    // Strip any UTC / timezone suffix so the candidate's exact scheduled clock time is preserved
+    const clean = isoStr.replace(/(\.\d+)?(Z|[+-]\d{2}:\d{2})$/, '');
+    const d = new Date(clean);
     const date = d.toLocaleDateString('en-IN', {
       weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
     });

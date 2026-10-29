@@ -130,7 +130,9 @@ export default function Dashboard() {
   const formatScheduledDate = (iso) => {
     if (!iso) return null;
     try {
-      const d = new Date(iso);
+      // Strip any UTC / timezone suffix so the candidate's exact scheduled clock time is preserved
+      const clean = iso.replace(/(\.\d+)?(Z|[+-]\d{2}:\d{2})$/, '');
+      const d = new Date(clean);
       return d.toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',

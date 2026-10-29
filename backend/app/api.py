@@ -688,7 +688,13 @@ def api_scheduling_confirm(
         is_reschedule=False,
     )
     
-    return {"success": True, "data": {"link": teams_link}}
+    return {
+        "success": True, 
+        "data": {
+            "link": teams_link,
+            "scheduled_at": dt.strftime("%Y-%m-%dT%H:%M:%S")
+        }
+    }
 
 
 @router.get("/reschedule/{token}")
@@ -706,7 +712,11 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
         "data": {
             "candidate_name": candidate.name if candidate else "Candidate",
             "job_title": job.title if job else "Interview",
-            "current_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
+            "current_scheduled_at": (
+                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                if jc.interview_scheduled_at
+                else None
+            ),
             "interview_link": jc.interview_link or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{jc.id}"
         }
     }
@@ -738,7 +748,7 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
         "message": "Interview rescheduled successfully",
         "data": {
             "link": teams_link,
-            "scheduled_at": dt.isoformat(),
+            "scheduled_at": dt.strftime("%Y-%m-%dT%H:%M:%S"),
         }
     }
 
