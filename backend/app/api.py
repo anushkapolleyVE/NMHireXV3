@@ -596,10 +596,11 @@ def api_user_dashboard(
 
 @router.get("/user/outreach")
 def api_user_outreach(
+    candidate_id: UUID | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return get_outreach_candidates(db, user.id)
+    return get_outreach_candidates(db, user.id, candidate_id=candidate_id)
 
 @router.get("/user/candidates")
 def api_user_all_candidates(
@@ -612,49 +613,90 @@ class ScheduleConfirmRequest(BaseModel):
     job_candidate_id: UUID
     interview_date: str
     interview_time: str
-    timezone: str
+    timezone: str = "Asia/Kolkata"
+
+
+def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
+    """Robustly parse date and time strings in various standard formats."""
+    time_clean = time_str.strip().upper()
+    combined = f"{date_str.strip()} {time_clean}"
+    
+    formats = [
+        "%Y-%m-%d %I:%M %p",
+        "%Y-%m-%d %I:%M%p",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %I %p",
+        "%Y-%m-%d %I%p",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(combined, fmt)
+        except ValueError:
+            pass
+            
+    try:
+        from dateutil import parser
+        return parser.parse(f"{date_str} {time_str}")
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=400, detail=f"Invalid date/time format: '{date_str}' '{time_str}'")
+
 
 @router.get("/scheduling/dates")
 def api_scheduling_dates():
     import datetime
     today = datetime.date.today()
     dates = []
-    for i in range(1, 8):
+    # Provide next 7 days starting from today (24h round-the-clock availability)
+    for i in range(0, 8):
         d = today + datetime.timedelta(days=i)
         dates.append({"date": d.isoformat()})
     return {"dates": dates}
 
+
 @router.get("/scheduling/slots")
-def api_scheduling_slots(date: str):
-    return {"slots": ["10:00 AM", "11:30 AM", "02:00 PM", "04:00 PM"]}
+def api_scheduling_slots(date: str | None = None):
+    # Available for 24 hours round-the-clock (every 30 mins)
+    slots = []
+    for hour in range(24):
+        for minute in (0, 30):
+            h12 = hour % 12
+            if h12 == 0:
+                h12 = 12
+            ampm = "AM" if hour < 12 else "PM"
+            slots.append(f"{h12:02d}:{minute:02d} {ampm}")
+    return {"slots": slots}
+
 
 @router.post("/scheduling/confirm")
 def api_scheduling_confirm(
     req: ScheduleConfirmRequest,
     db: Session = Depends(get_db)
 ):
-    import datetime
     from .tools_function import schedule_candidate_interview
     
-    dt = datetime.datetime.strptime(f"{req.interview_date} {req.interview_time}", "%Y-%m-%d %I:%M %p")
-    
+    dt = parse_interview_datetime(req.interview_date, req.interview_time)
     teams_link = f"https://teams.microsoft.com/l/meetup-join/nmhirex-{req.job_candidate_id}"
     
     res = schedule_candidate_interview(
         db=db,
         job_candidate_id=req.job_candidate_id,
         scheduled_at=dt,
-        interview_link=teams_link
+        interview_link=teams_link,
+        is_reschedule=False,
     )
     
     return {"success": True, "data": {"link": teams_link}}
+
 
 @router.get("/reschedule/{token}")
 def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
     from .models import JobCandidate, Candidate, Job
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
-        raise HTTPException(status_code=404, detail="Invalid or expired token")
+        raise HTTPException(status_code=404, detail="Invalid or expired reschedule token")
         
     candidate = db.get(Candidate, jc.candidate_id)
     job = db.get(Job, jc.job_id)
@@ -662,40 +704,43 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
     return {
         "success": True,
         "data": {
-            "candidate_name": candidate.name,
-            "job_title": job.title,
-            "current_scheduled_at": jc.interview_scheduled_at
+            "candidate_name": candidate.name if candidate else "Candidate",
+            "job_title": job.title if job else "Interview",
+            "current_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
+            "interview_link": jc.interview_link or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{jc.id}"
         }
     }
+
 
 @router.post("/reschedule/{token}")
 def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depends(get_db)):
     from .models import JobCandidate
-    from .tools_function import send_whatsapp_message
-    import datetime
+    from .tools_function import schedule_candidate_interview
     
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
-        raise HTTPException(status_code=404, detail="Invalid or expired token")
+        raise HTTPException(status_code=404, detail="Invalid or expired reschedule token")
         
-    dt = datetime.datetime.strptime(f"{req.new_date} {req.new_time}", "%Y-%m-%d %I:%M %p")
+    dt = parse_interview_datetime(req.new_date, req.new_time)
     
-    jc.interview_scheduled_at = dt
-    jc.reminder_24h_sent = False
-    jc.reminder_1h_sent = False
+    teams_link = jc.interview_link or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{jc.id}"
     
-    # Optionally re-generate teams link if needed
+    res = schedule_candidate_interview(
+        db=db,
+        job_candidate_id=jc.id,
+        scheduled_at=dt,
+        interview_link=teams_link,
+        is_reschedule=True,
+    )
     
-    db.commit()
-    
-    from .models import Candidate
-    candidate = db.get(Candidate, jc.candidate_id)
-    if candidate.phone:
-        msg = f"Hi {candidate.name}, your interview has been successfully rescheduled to {dt.strftime('%B %d, %Y at %I:%M %p')}."
-        # Fire and forget / background task is preferred, but calling directly here for simplicity
-        send_whatsapp_message(candidate.phone, msg)
-        
-    return {"success": True, "message": "Interview rescheduled successfully"}
+    return {
+        "success": True,
+        "message": "Interview rescheduled successfully",
+        "data": {
+            "link": teams_link,
+            "scheduled_at": dt.isoformat(),
+        }
+    }
 
 
 # ============================================================

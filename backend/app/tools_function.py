@@ -4814,6 +4814,7 @@ def schedule_candidate_interview(
     job_candidate_id: UUID,
     scheduled_at: datetime,
     interview_link: str | None = None,
+    is_reschedule: bool = False,
 ) -> dict:
     """Persist the selected interview slot and send the confirmation by WhatsApp."""
     job_candidate = db.get(JobCandidate, job_candidate_id)
@@ -4830,7 +4831,8 @@ def schedule_candidate_interview(
         job_candidate.reschedule_token = str(uuid.uuid4())
         
     job_candidate.interview_scheduled_at = scheduled_at
-    job_candidate.interview_link = interview_link
+    if interview_link:
+        job_candidate.interview_link = interview_link
     job_candidate.recruitment_status = "INTERVIEW_SCHEDULED"
     job_candidate.reminder_24h_sent = False
     job_candidate.reminder_1h_sent = False
@@ -4844,12 +4846,18 @@ def schedule_candidate_interview(
         frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
     reschedule_link = f"{frontend_url}/reschedule/{job_candidate.reschedule_token}"
     
-    message = (
-        "Your interview has been scheduled successfully! 🎉\n\n"
-        f"📅 Date & Time: {date_text}\n"
-    )
-    if interview_link:
-        message += f"\n🔗 Interview Link:\n{interview_link}\n"
+    if is_reschedule:
+        message = (
+            "Your interview has been rescheduled successfully! 🎉\n\n"
+            f"📅 New Date & Time: {date_text}\n"
+        )
+    else:
+        message = (
+            "Your interview has been scheduled successfully! 🎉\n\n"
+            f"📅 Date & Time: {date_text}\n"
+        )
+    if job_candidate.interview_link:
+        message += f"\n🔗 Interview Link:\n{job_candidate.interview_link}\n"
     message += f"\n🔄 Need to pick a new time? Reschedule here:\n{reschedule_link}\n"
     message += "\nPlease be available a few minutes before the scheduled time."
 
@@ -4939,13 +4947,18 @@ def mark_candidate_contacted(
 def get_outreach_candidates(
     db: Session,
     user_id: UUID,
+    candidate_id: UUID | None = None,
 ) -> list[dict]:
     """Return candidates currently in the WhatsApp recruitment pipeline."""
-    rows = db.execute(
+    q = (
         select(JobCandidate, Job, Candidate)
         .join(Job, Job.id == JobCandidate.job_id)
         .join(Candidate, Candidate.id == JobCandidate.candidate_id)
-        .where(
+    )
+    if candidate_id:
+        q = q.where((Candidate.id == candidate_id) | (JobCandidate.id == candidate_id))
+    else:
+        q = q.where(
             JobCandidate.recruitment_status.in_([
                 "CONTACTED",
                 "INTERESTED",
@@ -4954,10 +4967,8 @@ def get_outreach_candidates(
                 "INTERVIEW_SCHEDULED",
             ])
         )
-        .order_by(
-            JobCandidate.updated_at.desc()
-        )
-    ).all()
+
+    rows = db.execute(q.order_by(JobCandidate.updated_at.desc())).all()
 
     results = []
 
@@ -5010,8 +5021,9 @@ def get_outreach_candidates(
         else:
             delivery_status = "SENT"
 
-        # Exclude failed outreach invitations - failed candidates are only tracked on the Dashboard
-        if delivery_status == "FAILED":
+        # Exclude failed outreach invitations from default outreach list,
+        # but allow viewing if specifically requested by candidate_id
+        if delivery_status == "FAILED" and not candidate_id:
             continue
 
         results.append({
@@ -5023,6 +5035,7 @@ def get_outreach_candidates(
             "job": job.title or "Unknown Role",
             "status": jc.recruitment_status,
             "delivery_status": delivery_status,
+            "error_message": latest_outbound.message if (latest_outbound and c_status == "FAILED") else None,
             "interview_scheduled_at": jc.interview_scheduled_at.isoformat() if jc.interview_scheduled_at else None,
             "interview_link": jc.interview_link,
             "score": (

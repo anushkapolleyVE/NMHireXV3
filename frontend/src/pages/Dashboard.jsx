@@ -393,8 +393,8 @@ export default function Dashboard() {
                             </button>
                           ) : (
                             <button
-                              onClick={() => navigate('/outreach')}
-                              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-700 transition-all"
+                              onClick={() => navigate(`/outreach?candidateId=${cand.id}&jobCandidateId=${cand.job_candidate_id || ''}&name=${encodeURIComponent(cand.name || '')}&phone=${cand.phone || ''}`)}
+                              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-all shadow-sm"
                             >
                               View Response
                             </button>

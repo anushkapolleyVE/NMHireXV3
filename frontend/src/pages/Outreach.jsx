@@ -1,20 +1,37 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
 import { getOutreachData, updateCandidateStatus } from '../utils/api';
 import Header from '../components/Header';
 
 export default function Outreach() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusedCandidateId = searchParams.get('candidateId');
+  const focusedJobCandidateId = searchParams.get('jobCandidateId');
+  const focusedPhone = searchParams.get('phone');
+  const focusedName = searchParams.get('name');
+
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchOutreach = async () => {
       try {
-        const data = await getOutreachData();
+        setLoading(true);
+        const data = await getOutreachData(focusedCandidateId || focusedJobCandidateId || null);
 
         if (data && Array.isArray(data)) {
-          // Only show delivered candidates (replied and awaiting) - failed are tracked on Dashboard
-          const deliveredOnly = data.filter(c => c.delivery_status !== 'FAILED');
-          setCandidates(deliveredOnly);
+          if (focusedCandidateId || focusedJobCandidateId || focusedPhone) {
+            const filtered = data.filter(c =>
+              (focusedCandidateId && (c.id === focusedCandidateId || c.job_candidate_id === focusedCandidateId)) ||
+              (focusedJobCandidateId && c.job_candidate_id === focusedJobCandidateId) ||
+              (focusedPhone && c.phone === focusedPhone)
+            );
+            setCandidates(filtered.length > 0 ? filtered : data);
+          } else {
+            // Normal view in Outreach: only show delivered candidates (replied and awaiting)
+            const deliveredOnly = data.filter(c => c.delivery_status !== 'FAILED');
+            setCandidates(deliveredOnly);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch outreach data', err);
@@ -24,7 +41,11 @@ export default function Outreach() {
     };
 
     fetchOutreach();
-  }, []);
+  }, [focusedCandidateId, focusedJobCandidateId, focusedPhone]);
+
+  const handleShowAll = () => {
+    setSearchParams({});
+  };
 
   const handleStatusUpdate = async (jobId, candidateId, status) => {
     try {
@@ -171,25 +192,70 @@ export default function Outreach() {
             </p>
           </div>
 
+          {/* Focused Candidate Notification Banner */}
+          {focusedCandidateId && (
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-brand/10 border border-brand/25 p-4 animate-slide-up shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-brand/20 border border-brand/30 flex items-center justify-center text-brand">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-brand">Candidate Response View</p>
+                  <p className="text-sm font-semibold text-white">
+                    Showing response for <span className="text-brand font-bold">{focusedName || candidates[0]?.name || 'Candidate'}</span>
+                    {focusedPhone && <span className="text-xs text-slate-400 font-mono ml-2">({focusedPhone})</span>}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleShowAll}
+                  className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700 hover:text-white transition-all flex items-center gap-1.5 shadow-sm"
+                >
+                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                  View All Outreach Responses
+                </button>
+                <Link
+                  to="/dashboard"
+                  className="rounded-xl bg-slate-800/80 px-4 py-2 text-xs font-bold text-slate-400 ring-1 ring-slate-700 hover:bg-slate-700 hover:text-white transition-all"
+                >
+                  ← Dashboard
+                </Link>
+              </div>
+            </div>
+          )}
+
           {/* Candidates */}
           <div className="space-y-4 animate-slide-up opacity-0-init animate-delay-200">
 
             {/* Loading */}
             {loading ? (
               <div className="py-12 text-center text-slate-500">
-                Loading outreach candidates...
+                Loading outreach candidate response...
               </div>
             ) : candidates.length === 0 ? (
 
               /* Empty State */
               <div className="glass-dark rounded-2xl p-12 text-center border border-slate-800">
                 <p className="text-lg font-bold text-slate-300">
-                  No candidates in outreach.
+                  {focusedCandidateId ? 'Candidate not found in outreach.' : 'No candidates in outreach.'}
                 </p>
 
                 <p className="text-sm text-slate-500 mt-2">
-                  When you send WhatsApp invites or add candidates to outreach,
-                  they'll appear here.
+                  {focusedCandidateId ? (
+                    <button
+                      onClick={handleShowAll}
+                      className="text-brand underline hover:text-brand-soft"
+                    >
+                      Show all outreach candidates
+                    </button>
+                  ) : (
+                    "When you send WhatsApp invites or add candidates to outreach, they'll appear here."
+                  )}
                 </p>
               </div>
 
@@ -200,7 +266,7 @@ export default function Outreach() {
 
                 <div
                   key={`${candidate.job_id}-${candidate.id}`}
-                  className="glass-dark glass-dark-card rounded-2xl p-6 flex flex-col gap-5"
+                  className="glass-dark glass-dark-card rounded-2xl p-6 flex flex-col gap-5 ring-1 ring-slate-800 hover:ring-brand/30 transition-all"
                 >
 
                   {/* Candidate Information */}
@@ -218,17 +284,36 @@ export default function Outreach() {
 
                     {/* Delivery & Recruitment Status */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
-                        Delivered
-                      </span>
+                      {candidate.delivery_status === 'FAILED' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-400 ring-1 ring-rose-500/30">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                          Failed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                          Delivered
+                        </span>
+                      )}
                       {getStatusBadge(candidate)}
                     </div>
 
                   </div>
 
                   {/* WhatsApp Response */}
-                  {candidate.response_text ? (
+                  {candidate.delivery_status === 'FAILED' ? (
+                    <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-4">
+                      <div className="flex items-center gap-2 mb-1 text-rose-400">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p className="text-xs uppercase tracking-wider font-bold">Message Undeliverable</p>
+                      </div>
+                      <p className="text-sm text-slate-300">
+                        {candidate.error_message || 'WhatsApp message was undeliverable to this phone number. No response received.'}
+                      </p>
+                    </div>
+                  ) : candidate.response_text ? (
                     <div className="rounded-xl bg-slate-900/70 border border-slate-800 p-4">
 
                       <div className="flex items-center justify-between mb-2">
@@ -259,11 +344,11 @@ export default function Outreach() {
                     /* No Response */
                     <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-4">
 
-                      <p className="text-xs uppercase tracking-wider font-bold text-slate-600 mb-1">
+                      <p className="text-xs uppercase tracking-wider font-bold text-slate-500 mb-1">
                         WhatsApp Response
                       </p>
 
-                      <p className="text-sm text-slate-500">
+                      <p className="text-sm text-slate-400 italic">
                         No response received yet.
                       </p>
 

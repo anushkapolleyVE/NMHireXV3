@@ -141,8 +141,11 @@ export const getAllCandidates = async () => {
   return await res.json();
 };
 
-export const getOutreachData = async () => {
-  const res = await fetch(`${API_BASE_URL}/user/outreach`, {
+export const getOutreachData = async (candidateId = null) => {
+  const url = candidateId
+    ? `${API_BASE_URL}/user/outreach?candidate_id=${encodeURIComponent(candidateId)}`
+    : `${API_BASE_URL}/user/outreach`;
+  const res = await fetch(url, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error('Failed to fetch outreach data');
