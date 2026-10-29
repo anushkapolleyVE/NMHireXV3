@@ -702,7 +702,10 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
     from .models import JobCandidate, Candidate, Job
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
-        raise HTTPException(status_code=404, detail="Invalid or expired reschedule token")
+        raise HTTPException(
+            status_code=404,
+            detail="This reschedule link has already been used or is expired. Interviews can only be rescheduled once."
+        )
         
     candidate = db.get(Candidate, jc.candidate_id)
     job = db.get(Job, jc.job_id)
@@ -729,7 +732,10 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
     
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
-        raise HTTPException(status_code=404, detail="Invalid or expired reschedule token")
+        raise HTTPException(
+            status_code=404,
+            detail="This reschedule link has already been used or is expired. Interviews can only be rescheduled once."
+        )
         
     dt = parse_interview_datetime(req.new_date, req.new_time)
     

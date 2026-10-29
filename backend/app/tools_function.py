@@ -4827,8 +4827,12 @@ def schedule_candidate_interview(
     import uuid
     from .config import settings
     
-    if not job_candidate.reschedule_token:
-        job_candidate.reschedule_token = str(uuid.uuid4())
+    if not is_reschedule:
+        if not job_candidate.reschedule_token:
+            job_candidate.reschedule_token = str(uuid.uuid4())
+    else:
+        # Candidate can only reschedule once. Invalidate token so it cannot be used again
+        job_candidate.reschedule_token = None
         
     job_candidate.interview_scheduled_at = scheduled_at
     if interview_link:
@@ -4844,22 +4848,25 @@ def schedule_candidate_interview(
     frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
     if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
         frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
-    reschedule_link = f"{frontend_url}/reschedule/{job_candidate.reschedule_token}"
     
     if is_reschedule:
         message = (
             "Your interview has been rescheduled successfully! 🎉\n\n"
             f"📅 New Date & Time: {date_text}\n"
         )
+        if job_candidate.interview_link:
+            message += f"\n🔗 Interview Link:\n{job_candidate.interview_link}\n"
+        message += "\nPlease be available a few minutes before the scheduled time."
     else:
+        reschedule_link = f"{frontend_url}/reschedule/{job_candidate.reschedule_token}"
         message = (
             "Your interview has been scheduled successfully! 🎉\n\n"
             f"📅 Date & Time: {date_text}\n"
         )
-    if job_candidate.interview_link:
-        message += f"\n🔗 Interview Link:\n{job_candidate.interview_link}\n"
-    message += f"\n🔄 Need to pick a new time? Reschedule here:\n{reschedule_link}\n"
-    message += "\nPlease be available a few minutes before the scheduled time."
+        if job_candidate.interview_link:
+            message += f"\n🔗 Interview Link:\n{job_candidate.interview_link}\n"
+        message += f"\n🔄 Need to pick a new time? Reschedule here:\n{reschedule_link}\n"
+        message += "\nPlease be available a few minutes before the scheduled time."
 
     sent = _send_whatsapp_text_message(
         raw_phone=candidate.phone if candidate else "",

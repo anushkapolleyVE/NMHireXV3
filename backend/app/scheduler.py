@@ -30,14 +30,20 @@ def check_interview_reminders():
         candidates_24h = db.query(JobCandidate).filter(
             JobCandidate.interview_scheduled_at.between(start_24h, end_24h),
             JobCandidate.reminder_24h_sent == False,
-            JobCandidate.reschedule_token.isnot(None)
         ).all()
         
         for jc in candidates_24h:
             candidate = db.get(Candidate, jc.candidate_id)
             if candidate and candidate.phone:
-                link = f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/reschedule/{jc.reschedule_token}"
-                msg = f"Reminder: Your interview is in 24 hours at {jc.interview_scheduled_at.strftime('%B %d, %Y at %I:%M %p')}. To reschedule, visit: {link}"
+                teams_part = f"\nTeams Link: {jc.interview_link}" if jc.interview_link else ""
+                if jc.reschedule_token:
+                    frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
+                    if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
+                        frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
+                    link = f"{frontend_url}/reschedule/{jc.reschedule_token}"
+                    msg = f"Reminder: Your interview is in 24 hours at {jc.interview_scheduled_at.strftime('%B %d, %Y at %I:%M %p')}.{teams_part}\n\nTo reschedule, visit: {link}"
+                else:
+                    msg = f"Reminder: Your interview is in 24 hours at {jc.interview_scheduled_at.strftime('%B %d, %Y at %I:%M %p')}.{teams_part}"
                 send_whatsapp_message(candidate.phone, msg)
                 jc.reminder_24h_sent = True
         
@@ -48,14 +54,20 @@ def check_interview_reminders():
         candidates_1h = db.query(JobCandidate).filter(
             JobCandidate.interview_scheduled_at.between(start_1h, end_1h),
             JobCandidate.reminder_1h_sent == False,
-            JobCandidate.reschedule_token.isnot(None)
         ).all()
         
         for jc in candidates_1h:
             candidate = db.get(Candidate, jc.candidate_id)
             if candidate and candidate.phone:
-                link = f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}/reschedule/{jc.reschedule_token}"
-                msg = f"Reminder: Your interview is in 1 hour at {jc.interview_scheduled_at.strftime('%I:%M %p')}. Teams Link: {jc.interview_link}. To reschedule, visit: {link}"
+                teams_part = f"\nTeams Link: {jc.interview_link}" if jc.interview_link else ""
+                if jc.reschedule_token:
+                    frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
+                    if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
+                        frontend_url = "https://nm-hire-xv-3-c4m5.vercel.app"
+                    link = f"{frontend_url}/reschedule/{jc.reschedule_token}"
+                    msg = f"Reminder: Your interview is in 1 hour at {jc.interview_scheduled_at.strftime('%I:%M %p')}.{teams_part}\n\nTo reschedule, visit: {link}"
+                else:
+                    msg = f"Reminder: Your interview is in 1 hour at {jc.interview_scheduled_at.strftime('%I:%M %p')}.{teams_part}"
                 send_whatsapp_message(candidate.phone, msg)
                 jc.reminder_1h_sent = True
 

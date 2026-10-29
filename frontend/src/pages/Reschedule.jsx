@@ -39,7 +39,8 @@ const Reschedule = () => {
         // Fetch candidate reschedule details
         const res = await fetch(`${API_BASE_URL}/reschedule/${token}`);
         if (!res.ok) {
-          throw new Error('Invalid or expired reschedule link. Please check the link or contact your recruiter.');
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || 'This reschedule link has already been used or is expired. Interviews can only be rescheduled once.');
         }
         const data = await res.json();
         setDetails(data.data);
