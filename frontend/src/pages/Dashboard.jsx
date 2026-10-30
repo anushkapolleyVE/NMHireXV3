@@ -33,6 +33,7 @@ export default function Dashboard() {
   const awaiting = metrics.awaiting ?? 0;
   const delivered = metrics.delivered ?? invitesSent;
   const failed = metrics.failed ?? 0;
+  const skipped = metrics.skipped ?? metrics.invalid_phone ?? 0;
 
   const candidatesList = dashboardData?.recent_candidates || [];
 
@@ -61,6 +62,16 @@ export default function Dashboard() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
           </svg>
           Failed
+        </span>
+      );
+    }
+    if (s === 'INVALID_PHONE' || s === 'SKIPPED' || s === 'SKIPPED_INVALID_PHONE' || s === 'INVALID') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-bold text-amber-400 ring-1 ring-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.15)]">
+          <svg className="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          Invalid Phone
         </span>
       );
     }
@@ -115,6 +126,14 @@ export default function Dashboard() {
         return (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-400 ring-1 ring-slate-700">
             Not Interested
+          </span>
+        );
+      case 'SKIPPED':
+      case 'INVALID_PHONE':
+      case 'SKIPPED_INVALID_PHONE':
+        return (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-400 ring-1 ring-amber-500/30">
+            Skipped
           </span>
         );
       case 'CONTACTED':
@@ -286,6 +305,15 @@ export default function Dashboard() {
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Failed / Undelivered</p>
                     <p className={`font-display text-2xl font-bold ${failed > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{failed}</p>
+                  </div>
+                </div>
+
+                {/* Invalid / Skipped Pill */}
+                <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 px-5 py-3 border border-amber-500/25 shadow-inner">
+                  <div className={`size-2.5 rounded-full ${skipped > 0 ? 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]' : 'bg-slate-600'}`}></div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invalid / Skipped</p>
+                    <p className={`font-display text-2xl font-bold ${skipped > 0 ? 'text-amber-400' : 'text-slate-400'}`}>{skipped}</p>
                   </div>
                 </div>
 

@@ -3574,6 +3574,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
     awaiting = 0
     delivered_count = 0
     failed_count = 0
+    skipped_count = 0
 
     recent_candidates = []
 
@@ -3587,10 +3588,15 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             "INTERVIEW",
             "INTERVIEW_COMPLETED",
             "NOT_INTERESTED",
+            "SKIPPED",
+            "INVALID_PHONE",
+            "SKIPPED_INVALID_PHONE",
         }
 
         if has_outreach:
-            invites_sent += 1
+            if status not in {"SKIPPED", "INVALID_PHONE", "SKIPPED_INVALID_PHONE"}:
+                invites_sent += 1
+
             if status in {"INTERVIEW_SCHEDULED", "INTERVIEW", "INTERVIEW_COMPLETED"} or jc.interview_scheduled_at is not None:
                 meeting_scheduled += 1
                 interested += 1
@@ -3613,7 +3619,10 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             )
 
             c_status = (latest_contact.status if latest_contact else ("DELIVERED" if status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"} else "SENT")).upper()
-            if c_status == "FAILED":
+            if c_status in {"INVALID_PHONE", "SKIPPED", "SKIPPED_INVALID_PHONE"} or status in {"SKIPPED", "INVALID_PHONE", "SKIPPED_INVALID_PHONE"}:
+                delivery_status = "INVALID_PHONE"
+                skipped_count += 1
+            elif c_status == "FAILED":
                 delivery_status = "FAILED"
                 failed_count += 1
             elif c_status in {"DELIVERED", "READ"} or status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"}:
@@ -3652,6 +3661,8 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             "awaiting": awaiting,
             "delivered": delivered_count,
             "failed": failed_count,
+            "skipped": skipped_count,
+            "invalid_phone": skipped_count,
             "active_jobs": invites_sent,
             "candidates_screened": invites_sent,
             "strong_matches": interested,
@@ -5456,17 +5467,6 @@ def send_naukri_outreach_array(
             skipped_count += 1
             continue
 
-        clean_phone = _clean_whatsapp_phone(raw_phone)
-        if not clean_phone:
-            results.append({
-                "no": serial_no,
-                "name": name,
-                "phone": raw_phone,
-                "status": "SKIPPED_INVALID_PHONE",
-            })
-            skipped_count += 1
-            continue
-
         # ----------------------------------------------------------------
         # Find or create Job for this candidate if job_id was not provided
         # ----------------------------------------------------------------
@@ -5499,6 +5499,62 @@ def send_naukri_outreach_array(
                 db.add(role_job)
                 db.flush()
             current_job_id = role_job.id
+
+        clean_phone = _clean_whatsapp_phone(raw_phone)
+        if not clean_phone:
+            # Persist candidate so they appear in Dashboard with Invalid Phone / Skipped status
+            cand_skipped = db.scalar(
+                select(Candidate).where(Candidate.phone == raw_phone)
+            )
+            if cand_skipped is None:
+                cand_skipped = Candidate(
+                    name=name,
+                    phone=raw_phone,
+                    current_role=role,
+                )
+                db.add(cand_skipped)
+                db.flush()
+
+            jc_skipped = db.scalar(
+                select(JobCandidate).where(
+                    JobCandidate.job_id == current_job_id,
+                    JobCandidate.candidate_id == cand_skipped.id,
+                )
+            )
+            if jc_skipped is None:
+                jc_skipped = JobCandidate(
+                    job_id=current_job_id,
+                    candidate_id=cand_skipped.id,
+                    is_shortlisted=True,
+                    recruitment_status="SKIPPED",
+                )
+                db.add(jc_skipped)
+                db.flush()
+            else:
+                jc_skipped.recruitment_status = "SKIPPED"
+
+            skipped_contact = CandidateContact(
+                job_candidate_id=jc_skipped.id,
+                channel="WHATSAPP",
+                message_type="OUTBOUND",
+                message="Skipped: Invalid phone number (<10 digits or incomplete)",
+                provider="NMVE",
+                status="INVALID_PHONE",
+                sent_at=datetime.utcnow(),
+            )
+            db.add(skipped_contact)
+            db.commit()
+
+            results.append({
+                "no": serial_no,
+                "name": name,
+                "phone": raw_phone,
+                "status": "SKIPPED_INVALID_PHONE",
+                "candidate_id": str(cand_skipped.id),
+                "job_candidate_id": str(jc_skipped.id),
+            })
+            skipped_count += 1
+            continue
 
 
         # ----------------------------------------------------------------
