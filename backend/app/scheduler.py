@@ -12,6 +12,9 @@ def check_interview_reminders():
     Checks for upcoming interviews and sends WhatsApp reminders:
     1. Exactly 24 hours before the interview (e.g., at 3:00 PM today for tomorrow 3:00 PM)
     2. Exactly 1 hour before the interview (e.g., at 2:00 PM today for today 3:00 PM)
+
+    Uses atomic database claims to ensure ONLY 1 reminder message is ever sent,
+    even with multiple concurrent backend processes (e.g. Render + Localhost).
     """
     db: Session = SessionLocal()
     try:
@@ -30,7 +33,7 @@ def check_interview_reminders():
 
             # Strip tzinfo to compare direct wall-clock times
             sched = jc.interview_scheduled_at.replace(tzinfo=None)
-            
+
             # Target times for exact reminder dispatches
             target_24h = sched - datetime.timedelta(hours=24)
             target_1h = sched - datetime.timedelta(hours=1)
@@ -42,11 +45,23 @@ def check_interview_reminders():
 
             # ----------------------------------------------------
             # 1. EXACTLY 24 HOURS BEFORE
-            # If interview is at 3:00 PM tomorrow, triggers at 3:00 PM today.
+            # E.g. If interview is at 3:00 PM tomorrow, triggers at 3:00 PM today.
             # Never triggers before 3:00 PM (now < target_24h).
             # ----------------------------------------------------
             if not jc.reminder_24h_sent:
                 if target_24h <= now < (target_24h + datetime.timedelta(minutes=2)):
+                    # ATOMIC CLAIM: Update flag to True immediately before making external API call.
+                    # If another process/worker already updated it, claimed will be 0 and we skip.
+                    claimed = db.query(JobCandidate).filter(
+                        JobCandidate.id == jc.id,
+                        JobCandidate.reminder_24h_sent == False,
+                    ).update({JobCandidate.reminder_24h_sent: True}, synchronize_session=False)
+                    db.commit()
+
+                    if not claimed:
+                        # Another instance (e.g. Render or local process) already claimed this send!
+                        continue
+
                     time_str = sched.strftime('%B %d, %Y at %I:%M %p')
                     if jc.reschedule_token:
                         link = f"{frontend_url}/reschedule/{jc.reschedule_token}"
@@ -60,7 +75,6 @@ def check_interview_reminders():
                     print(f"[SCHEDULER] Triggering exact 24h reminder for {candidate.phone} (Interview at {time_str})")
                     sent = _send_whatsapp_text_message(raw_phone=candidate.phone, text_message=msg)
                     if sent:
-                        jc.reminder_24h_sent = True
                         db.add(
                             CandidateContact(
                                 job_candidate_id=jc.id,
@@ -75,15 +89,31 @@ def check_interview_reminders():
                         db.commit()
                         print(f"[SCHEDULER] Exact 24h reminder sent successfully to {candidate.phone}")
                     else:
+                        # Rollback claim if delivery failed so it can be retried
+                        db.query(JobCandidate).filter(JobCandidate.id == jc.id).update(
+                            {JobCandidate.reminder_24h_sent: False}, synchronize_session=False
+                        )
+                        db.commit()
                         print(f"[SCHEDULER] Failed to deliver 24h reminder to {candidate.phone}")
 
             # ----------------------------------------------------
             # 2. EXACTLY 1 HOUR BEFORE
-            # If interview is at 3:00 PM today, triggers at 2:00 PM today.
+            # E.g. If interview is at 3:00 PM today, triggers at 2:00 PM today.
             # Never triggers before 2:00 PM (now < target_1h).
             # ----------------------------------------------------
             if not jc.reminder_1h_sent:
                 if target_1h <= now < (target_1h + datetime.timedelta(minutes=2)):
+                    # ATOMIC CLAIM: Update flag to True immediately before making external API call.
+                    claimed = db.query(JobCandidate).filter(
+                        JobCandidate.id == jc.id,
+                        JobCandidate.reminder_1h_sent == False,
+                    ).update({JobCandidate.reminder_1h_sent: True}, synchronize_session=False)
+                    db.commit()
+
+                    if not claimed:
+                        # Another instance already claimed this send!
+                        continue
+
                     time_str = sched.strftime('%I:%M %p')
                     if jc.reschedule_token:
                         link = f"{frontend_url}/reschedule/{jc.reschedule_token}"
@@ -97,7 +127,6 @@ def check_interview_reminders():
                     print(f"[SCHEDULER] Triggering exact 1h reminder for {candidate.phone} (Interview at {time_str})")
                     sent = _send_whatsapp_text_message(raw_phone=candidate.phone, text_message=msg)
                     if sent:
-                        jc.reminder_1h_sent = True
                         db.add(
                             CandidateContact(
                                 job_candidate_id=jc.id,
@@ -112,6 +141,11 @@ def check_interview_reminders():
                         db.commit()
                         print(f"[SCHEDULER] Exact 1h reminder sent successfully to {candidate.phone}")
                     else:
+                        # Rollback claim if delivery failed so it can be retried
+                        db.query(JobCandidate).filter(JobCandidate.id == jc.id).update(
+                            {JobCandidate.reminder_1h_sent: False}, synchronize_session=False
+                        )
+                        db.commit()
                         print(f"[SCHEDULER] Failed to deliver 1h reminder to {candidate.phone}")
 
     except Exception as e:

@@ -12,7 +12,8 @@ const Reschedule = () => {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [fatalError, setFatalError] = useState(null);
+  const [formError, setFormError] = useState(null);
   const [details, setDetails] = useState(null);
 
   const [dates, setDates] = useState([]);
@@ -42,7 +43,8 @@ const Reschedule = () => {
     const fetchAll = async () => {
       try {
         setLoading(true);
-        setError(null);
+        setFatalError(null);
+        setFormError(null);
 
         // Fetch candidate reschedule details
         const res = await fetch(`${API_BASE_URL}/reschedule/${token}`);
@@ -63,14 +65,23 @@ const Reschedule = () => {
 
         const fetchedDates = datesRes.dates || [];
         setDates(fetchedDates);
-        if (fetchedDates.length > 0) {
-          setSelectedDate(fetchedDates[0].date);
-        } else {
-          setSelectedDate(todayStr);
+
+        // Pre-select the existing interview date if it's today or in the future
+        let initialDate = todayStr;
+        if (data.data && data.data.current_scheduled_at) {
+          const currentSchedDate = data.data.current_scheduled_at.split('T')[0];
+          if (currentSchedDate >= todayStr) {
+            initialDate = currentSchedDate;
+          } else if (fetchedDates.length > 0) {
+            initialDate = fetchedDates[0].date;
+          }
+        } else if (fetchedDates.length > 0) {
+          initialDate = fetchedDates[0].date;
         }
+        setSelectedDate(initialDate);
       } catch (err) {
         console.error('Reschedule fetch error:', err);
-        setError(err.message);
+        setFatalError(err.message);
       } finally {
         setLoading(false);
       }
@@ -121,6 +132,10 @@ const Reschedule = () => {
   // Check if a given date & slot is in the past
   const isSlotInPast = (dateStr, slot) => {
     if (!dateStr || !slot) return false;
+    // Any future date cannot be in the past
+    if (dateStr > todayStr) return false;
+    if (dateStr < todayStr) return true;
+
     const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
     if (!match) return false;
     let h = parseInt(match[1], 10);
@@ -136,10 +151,10 @@ const Reschedule = () => {
 
   const handleSelectSlot = (slot) => {
     if (isSlotInPast(selectedDate, slot)) {
-      setError("This slot is already in the past. Please choose an upcoming time.");
+      setFormError("This slot is already in the past. Please choose an upcoming time.");
       return;
     }
-    setError(null);
+    setFormError(null);
     setSelectedSlot(slot);
     setCustomTimeInput(convert12To24(slot));
   };
@@ -149,14 +164,15 @@ const Reschedule = () => {
     if (time24) {
       const formatted12 = convert24To12(time24);
       if (isSlotInPast(selectedDate, formatted12)) {
-        setError("Selected time is in the past. Please choose a future time slot.");
+        setFormError("Selected time is in the past. Please choose a future time slot.");
         setSelectedSlot(null);
       } else {
-        setError(null);
+        setFormError(null);
         setSelectedSlot(formatted12);
       }
     } else {
       setSelectedSlot(null);
+      setFormError(null);
     }
   };
 
@@ -166,7 +182,7 @@ const Reschedule = () => {
       setSelectedSlot(null);
       setCustomTimeInput('');
     }
-    setError(null);
+    setFormError(null);
   };
 
   const filterSlot = (slot) => {
@@ -192,13 +208,17 @@ const Reschedule = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedDate || !selectedSlot) return;
+    if (!selectedDate || !selectedSlot) {
+      setFormError("Please select a date and time slot.");
+      return;
+    }
     if (isSlotInPast(selectedDate, selectedSlot)) {
-      setError("Cannot reschedule an interview to a past time. Please choose an upcoming time.");
+      setFormError("Cannot reschedule an interview to a past time. Please choose an upcoming time.");
       return;
     }
 
     setIsSubmitting(true);
+    setFormError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/reschedule/${token}`, {
         method: 'POST',
@@ -221,7 +241,7 @@ const Reschedule = () => {
       }
       setSuccess(true);
     } catch (err) {
-      alert(err.message);
+      setFormError(err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -284,13 +304,13 @@ const Reschedule = () => {
     );
   }
 
-  if (error) {
+  if (fatalError) {
     return (
       <div className="schedule-container dark-theme">
         <div className="schedule-content glass-card success-state" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
           <div className="text-red-400 text-5xl mb-4" style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
           <h2 className="schedule-title" style={{ color: '#f87171' }}>Reschedule Link Error</h2>
-          <p className="schedule-subtitle" style={{ color: '#cbd5e1' }}>{error}</p>
+          <p className="schedule-subtitle" style={{ color: '#cbd5e1' }}>{fatalError}</p>
         </div>
       </div>
     );
@@ -345,6 +365,12 @@ const Reschedule = () => {
             </div>
           </div>
         </div>
+
+        {formError && (
+          <div className="error-message" style={{ margin: '14px 0', padding: '12px 16px', borderRadius: '8px', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', fontSize: '0.9rem' }}>
+            ⚠️ {formError}
+          </div>
+        )}
 
         {/* 7-Day Quick Select */}
         <div className="section-title">Select New Date</div>
