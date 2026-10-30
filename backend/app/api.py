@@ -5,7 +5,7 @@ already produced the matched candidates, Sheela ranking and candidate score.
 NM-HireX owns persistence, history checks, WhatsApp, scheduling and status.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -646,6 +646,7 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
 
 @router.get("/scheduling/dates")
 def api_scheduling_dates(timezone: str | None = "Asia/Kolkata"):
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     tz_name = timezone or "Asia/Kolkata"
     try:
