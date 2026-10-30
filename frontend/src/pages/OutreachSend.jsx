@@ -53,8 +53,8 @@ export default function OutreachSend() {
       const parsed = JSON.parse(jsonText);
       const list = Array.isArray(parsed) ? parsed : (parsed.candidates || [parsed]);
       const mapped = list.map((item, idx) => {
-        const phoneVal = item.phone || (typeof item.no === 'string' && item.no.length >= 10 ? item.no : (String(item.no || '').length >= 10 ? String(item.no) : ''));
-        const noVal = (typeof item.no === 'number' || (typeof item.no === 'string' && item.no.length < 10)) ? item.no : (idx + 1);
+        const phoneVal = item.phone || (typeof item.no === 'string' && item.no.length >= 6 ? item.no : (String(item.no || '').length >= 6 ? String(item.no) : ''));
+        const noVal = (typeof item.no === 'number' || (typeof item.no === 'string' && item.no.length < 6)) ? item.no : (idx + 1);
         return {
           no: noVal,
           name: item.name ?? '',
@@ -72,7 +72,7 @@ export default function OutreachSend() {
   const handleSend = async () => {
     setError('');
     setResult(null);
-    const candidates = rows.filter(r => r.name.trim() && (r.phone.trim() || String(r.no).length >= 10)).map(r => ({
+    const candidates = rows.filter(r => r.name.trim() && (r.phone.trim() || String(r.no).length >= 6)).map(r => ({
       no: r.no,
       name: r.name.trim(),
       role: r.role.trim() || 'Software Engineer',

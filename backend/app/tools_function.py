@@ -3674,25 +3674,38 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
 
 
 def _clean_whatsapp_phone(raw_phone: str | None) -> str:
-    """Normalize and strictly validate an Indian WhatsApp number (must be 10 digits or 12 digits with 91)."""
+    """Normalize and strictly validate an Indian WhatsApp number.
+
+    A valid Indian mobile number must have 10 mobile digits starting with 6, 7, 8, or 9:
+    - If 12 digits starting with country code 91 and clean[2] in '6789': return clean_phone
+    - If 10 digits starting with '6789' (and NOT starting with 91): return '91' + clean_phone
+    - If starting with 91 but total length is not 12 (e.g. 8, 9, 10, or 11 digits): REJECT (return "")
+    - Any other format, length, or prefix: REJECT (return "")
+    """
     if not raw_phone:
         return ""
 
     clean_phone = "".join(filter(str.isdigit, str(raw_phone)))
 
-    # Strip leading 0 if entered as 0XXXXXXXXXX (11 digits)
-    if len(clean_phone) == 11 and clean_phone.startswith("0"):
-        clean_phone = clean_phone[1:]
+    # Strip leading 0 if present (e.g. 0XXXXXXXXXX or 091XXXXXXXXXX)
+    if clean_phone.startswith("0"):
+        clean_phone = clean_phone.lstrip("0")
 
-    # If standard 10-digit Indian mobile number, prepend 91
-    if len(clean_phone) == 10:
+    # If it starts with country code 91:
+    if clean_phone.startswith("91"):
+        # Must be exactly 12 digits, and the mobile number (digits after 91) must start with 6, 7, 8, or 9
+        if len(clean_phone) == 12 and clean_phone[2] in "6789":
+            return clean_phone
+        # If it starts with 91 but does not have exactly 10 digits after 91 (e.g. 91 + 8 digits = 10 digits),
+        # it is an incomplete number and must NOT have another 91 prepended.
+        return ""
+
+    # If without country code 91:
+    # Must be exactly 10 digits and start with 6, 7, 8, or 9
+    if len(clean_phone) == 10 and clean_phone[0] in "6789":
         return "91" + clean_phone
 
-    # If already 12 digits starting with country code 91
-    if len(clean_phone) == 12 and clean_phone.startswith("91"):
-        return clean_phone
-
-    # Invalid phone length (e.g. 9 digits, 11 digits without 0, etc.)
+    # Invalid phone length or format
     return ""
 
 
@@ -5453,7 +5466,7 @@ def send_naukri_outreach_array(
         if not raw_phone and item.get("no"):
             no_val = str(item.get("no")).strip()
             digits = "".join(filter(str.isdigit, no_val))
-            if len(digits) >= 10:
+            if len(digits) >= 6:
                 raw_phone = no_val
                 serial_no = idx + 1
 
