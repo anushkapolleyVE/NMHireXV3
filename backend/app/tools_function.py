@@ -2671,8 +2671,8 @@ def schedule_candidate_interview(
     if interview_link:
         job_candidate.interview_link = interview_link
     job_candidate.recruitment_status = "INTERVIEW_SCHEDULED"
-    job_candidate.reminder_24h_sent = True
-    job_candidate.reminder_1h_sent = True
+    job_candidate.reminder_24h_sent = False
+    job_candidate.reminder_1h_sent = False
     db.commit()
 
     candidate = db.get(Candidate, job_candidate.candidate_id)

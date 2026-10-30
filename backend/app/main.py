@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
                 await asyncio.to_thread(check_interview_reminders)
             except Exception as e:
                 print(f"Scheduler error: {e}")
-            await asyncio.sleep(300) # Every 5 minutes
+            await asyncio.sleep(30) # Every 30 seconds
             
     task = asyncio.create_task(run_scheduler())
     yield
