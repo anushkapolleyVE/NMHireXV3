@@ -197,16 +197,16 @@ def login(
     }
 
 
-@router.get("/auth/me")
-def me(user: User = Depends(get_current_user)):
-    return {
-        "id": str(user.id),
-        "name": user.name,
-        "email": user.email,
-        "role": user.role,
-        "status": user.status,
-        "is_active": user.is_active,
-    }
+# @router.get("/auth/me")
+# def me(user: User = Depends(get_current_user)):
+#     return {
+#         "id": str(user.id),
+#         "name": user.name,
+#         "email": user.email,
+#         "role": user.role,
+#         "status": user.status,
+#         "is_active": user.is_active,
+#     }
 
 
 
@@ -215,128 +215,128 @@ def me(user: User = Depends(get_current_user)):
 # ============================================================
 # EXTERNAL RESUME MATCHING API - API 1
 # ============================================================
-@router.get("/resume-matching/requisitions")
-def api_resume_matching_requisitions(
-    status: str | None = Query("open"),
-    department: str | None = Query(None),
-    q: str | None = Query(None),
-    # Backward-compatible alias; it is translated to the external API's `q`.
-    search: str | None = Query(None, include_in_schema=False),
-    period: str | None = Query(None),
-    created_from: str | None = Query(None),
-    created_to: str | None = Query(None),
-    sort: str | None = Query("status"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    include: str | None = Query(None),
-    user: User = Depends(get_current_user),
-):
-    try:
-        effective_q = q or search
-        effective_include = include if include in {None, "details"} else None
+# @router.get("/resume-matching/requisitions")
+# def api_resume_matching_requisitions(
+#     status: str | None = Query("open"),
+#     department: str | None = Query(None),
+#     q: str | None = Query(None),
+#     # Backward-compatible alias; it is translated to the external API's `q`.
+#     search: str | None = Query(None, include_in_schema=False),
+#     period: str | None = Query(None),
+#     created_from: str | None = Query(None),
+#     created_to: str | None = Query(None),
+#     sort: str | None = Query("status"),
+#     limit: int = Query(50, ge=1, le=200),
+#     offset: int = Query(0, ge=0),
+#     include: str | None = Query(None),
+#     user: User = Depends(get_current_user),
+# ):
+#     try:
+#         effective_q = q or search
+#         effective_include = include if include in {None, "details"} else None
 
-        return {
-            "success": True,
-            "data": get_resume_matching_requisitions(
-                status=status,
-                department=department,
-                q=effective_q,
-                period=period,
-                created_from=created_from,
-                created_to=created_to,
-                sort=sort,
-                limit=limit,
-                offset=offset,
-                include=effective_include,
-                end_user=user.email,
-            ),
-        }
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        )
+#         return {
+#             "success": True,
+#             "data": get_resume_matching_requisitions(
+#                 status=status,
+#                 department=department,
+#                 q=effective_q,
+#                 period=period,
+#                 created_from=created_from,
+#                 created_to=created_to,
+#                 sort=sort,
+#                 limit=limit,
+#                 offset=offset,
+#                 include=effective_include,
+#                 end_user=user.email,
+#             ),
+#         }
+#     except Exception as exc:
+#         raise HTTPException(
+#             status_code=502,
+#             detail=str(exc),
+#         )
 
 
 # ============================================================
 # CREATE A LOCAL JOB FROM ONE VEREQ
 # ============================================================
-@router.post("/resume-matching/requisitions/{vereq_number}/create-job")
-def api_create_job_from_vereq(
-    vereq_number: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    if user.role == "ADMIN":
-        raise HTTPException(
-            status_code=403,
-            detail="Admin cannot create jobs",
-        )
+# @router.post("/resume-matching/requisitions/{vereq_number}/create-job")
+# def api_create_job_from_vereq(
+#     vereq_number: str,
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     if user.role == "ADMIN":
+#         raise HTTPException(
+#             status_code=403,
+#             detail="Admin cannot create jobs",
+#         )
 
-    try:
-        job = create_job_from_resume_matching_requisition(
-            db=db,
-            user_id=user.id,
-            vereq_number=vereq_number,
-            end_user=user.email,
-        )
-        return {
-            "success": True,
-            "job_id": str(job.id),
-            "vereq_number": vereq_number,
-            "title": job.title,
-        }
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        )
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        )
+#     try:
+#         job = create_job_from_resume_matching_requisition(
+#             db=db,
+#             user_id=user.id,
+#             vereq_number=vereq_number,
+#             end_user=user.email,
+#         )
+#         return {
+#             "success": True,
+#             "job_id": str(job.id),
+#             "vereq_number": vereq_number,
+#             "title": job.title,
+#         }
+#     except ValueError as exc:
+#         raise HTTPException(
+#             status_code=400,
+#             detail=str(exc),
+#         )
+#     except Exception as exc:
+#         db.rollback()
+#         raise HTTPException(
+#             status_code=502,
+#             detail=str(exc),
+#         )
 
 
 # ============================================================
 # EXTERNAL RESUME MATCHING API - API 2
 # This is the point where the score/rank enters NM-HireX.
 # ============================================================
-@router.post("/jobs/{job_id}/resume-matching")
-def api_resume_matching(
-    job_id: UUID,
-    vereq_number: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+# @router.post("/jobs/{job_id}/resume-matching")
+# def api_resume_matching(
+#     job_id: UUID,
+#     vereq_number: str,
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     job = db.get(Job, job_id)
+#     if not job:
+#         raise HTTPException(status_code=404, detail="Job not found")
 
-    if user.role != "ADMIN" and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not your job")
+#     if user.role != "ADMIN" and job.created_by != user.id:
+#         raise HTTPException(status_code=403, detail="Not your job")
 
-    try:
-        result = sync_resume_matching_candidates(
-            db=db,
-            job_id=job_id,
-            vereq_number=vereq_number,
-            top_n=100,
-            poll=True,
-            end_user=user.email,
-        )
-        return {
-            "success": True,
-            "message": "External matches saved successfully",
-            "data": result,
-        }
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        )
+#     try:
+#         result = sync_resume_matching_candidates(
+#             db=db,
+#             job_id=job_id,
+#             vereq_number=vereq_number,
+#             top_n=100,
+#             poll=True,
+#             end_user=user.email,
+#         )
+#         return {
+#             "success": True,
+#             "message": "External matches saved successfully",
+#             "data": result,
+#         }
+#     except Exception as exc:
+#         db.rollback()
+#         raise HTTPException(
+#             status_code=502,
+#             detail=str(exc),
+#         )
 
 
 
@@ -345,48 +345,48 @@ def api_resume_matching(
 # ============================================================
 # CANDIDATES
 # ============================================================
-@router.get("/jobs/{job_id}/candidates")
-def api_job_candidates(
-    job_id: UUID,
-    limit: int = Query(50, ge=1, le=100),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+# @router.get("/jobs/{job_id}/candidates")
+# def api_job_candidates(
+#     job_id: UUID,
+#     limit: int = Query(50, ge=1, le=100),
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     job = db.get(Job, job_id)
+#     if not job:
+#         raise HTTPException(status_code=404, detail="Job not found")
 
-    if user.role != "ADMIN" and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not your job")
+#     if user.role != "ADMIN" and job.created_by != user.id:
+#         raise HTTPException(status_code=403, detail="Not your job")
 
-    return {
-        "success": True,
-        "data": get_job_candidates(db, job_id, limit=limit),
-    }
+#     return {
+#         "success": True,
+#         "data": get_job_candidates(db, job_id, limit=limit),
+#     }
 
 
 # ============================================================
 # TOP 50 -> HISTORY CHECK -> WHATSAPP
 # ============================================================
-@router.post("/jobs/{job_id}/outreach")
-def api_outreach(
-    job_id: UUID,
-    limit: int = Query(50, ge=1, le=50),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+# @router.post("/jobs/{job_id}/outreach")
+# def api_outreach(
+#     job_id: UUID,
+#     limit: int = Query(50, ge=1, le=50),
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     job = db.get(Job, job_id)
+#     if not job:
+#         raise HTTPException(status_code=404, detail="Job not found")
 
-    if user.role != "ADMIN" and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not your job")
+#     if user.role != "ADMIN" and job.created_by != user.id:
+#         raise HTTPException(status_code=403, detail="Not your job")
 
-    return send_top_outreach(
-        db=db,
-        job_id=job_id,
-        limit=limit,
-    )
+#     return send_top_outreach(
+#         db=db,
+#         job_id=job_id,
+#         limit=limit,
+#     )
 
 
 # ============================================================
@@ -422,67 +422,67 @@ def api_whatsapp_webhook(
 # ============================================================
 # INTERVIEW SCHEDULING
 # ============================================================
-@router.post("/job-candidates/{job_candidate_id}/schedule")
-def api_schedule_interview(
-    job_candidate_id: UUID,
-    data: ScheduleInterviewRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    jc = db.get(JobCandidate, job_candidate_id)
-    if not jc:
-        raise HTTPException(status_code=404, detail="JobCandidate not found")
+# @router.post("/job-candidates/{job_candidate_id}/schedule")
+# def api_schedule_interview(
+#     job_candidate_id: UUID,
+#     data: ScheduleInterviewRequest,
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     jc = db.get(JobCandidate, job_candidate_id)
+#     if not jc:
+#         raise HTTPException(status_code=404, detail="JobCandidate not found")
 
-    job = db.get(Job, jc.job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+#     job = db.get(Job, jc.job_id)
+#     if not job:
+#         raise HTTPException(status_code=404, detail="Job not found")
 
-    if user.role != "ADMIN" and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not your job")
+#     if user.role != "ADMIN" and job.created_by != user.id:
+#         raise HTTPException(status_code=403, detail="Not your job")
 
-    try:
-        return {
-            "success": True,
-            "data": schedule_candidate_interview(
-                db=db,
-                job_candidate_id=job_candidate_id,
-                scheduled_at=data.scheduled_at,
-                interview_link=data.interview_link,
-            ),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+#     try:
+#         return {
+#             "success": True,
+#             "data": schedule_candidate_interview(
+#                 db=db,
+#                 job_candidate_id=job_candidate_id,
+#                 scheduled_at=data.scheduled_at,
+#                 interview_link=data.interview_link,
+#             ),
+#         }
+#     except ValueError as exc:
+#         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.patch("/job-candidates/{job_candidate_id}/interview-status")
-def api_interview_status(
-    job_candidate_id: UUID,
-    data: InterviewStatusRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    jc = db.get(JobCandidate, job_candidate_id)
-    if not jc:
-        raise HTTPException(status_code=404, detail="JobCandidate not found")
+# @router.patch("/job-candidates/{job_candidate_id}/interview-status")
+# def api_interview_status(
+#     job_candidate_id: UUID,
+#     data: InterviewStatusRequest,
+#     user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     jc = db.get(JobCandidate, job_candidate_id)
+#     if not jc:
+#         raise HTTPException(status_code=404, detail="JobCandidate not found")
 
-    job = db.get(Job, jc.job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+#     job = db.get(Job, jc.job_id)
+#     if not job:
+#         raise HTTPException(status_code=404, detail="Job not found")
 
-    if user.role != "ADMIN" and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not your job")
+#     if user.role != "ADMIN" and job.created_by != user.id:
+#         raise HTTPException(status_code=403, detail="Not your job")
 
-    try:
-        return {
-            "success": True,
-            "data": update_interview_status(
-                db=db,
-                job_candidate_id=job_candidate_id,
-                status=data.status,
-            ),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+#     try:
+#         return {
+#             "success": True,
+#             "data": update_interview_status(
+#                 db=db,
+#                 job_candidate_id=job_candidate_id,
+#                 status=data.status,
+#             ),
+#         }
+#     except ValueError as exc:
+#         raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ============================================================
@@ -645,23 +645,51 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
 
 
 @router.get("/scheduling/dates")
-def api_scheduling_dates():
-    import datetime
-    today = datetime.date.today()
+def api_scheduling_dates(timezone: str | None = "Asia/Kolkata"):
+    from zoneinfo import ZoneInfo
+    tz_name = timezone or "Asia/Kolkata"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+
+    today = datetime.now(tz).date()
     dates = []
-    # Provide next 7 days starting from today (24h round-the-clock availability)
+    # Provide next 7 days starting from today in candidate's timezone
     for i in range(0, 8):
-        d = today + datetime.timedelta(days=i)
+        d = today + timedelta(days=i)
         dates.append({"date": d.isoformat()})
     return {"dates": dates}
 
 
 @router.get("/scheduling/slots")
-def api_scheduling_slots(date: str | None = None):
-    # Available for 24 hours round-the-clock (every 30 mins)
+def api_scheduling_slots(
+    date: str | None = None,
+    timezone: str | None = "Asia/Kolkata",
+):
+    from zoneinfo import ZoneInfo
+    tz_name = timezone or "Asia/Kolkata"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+
     slots = []
     for hour in range(24):
         for minute in (0, 30):
+            # If the requested date is today in the candidate's timezone, filter out past slots
+            if date == today_str:
+                slot_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                # Filter out any slot that has already passed (or is right now)
+                if slot_dt <= now:
+                    continue
+            elif date and date < today_str:
+                # If the entire date is in the past, no slots are available
+                continue
+
             h12 = hour % 12
             if h12 == 0:
                 h12 = 12
@@ -675,9 +703,23 @@ def api_scheduling_confirm(
     req: ScheduleConfirmRequest,
     db: Session = Depends(get_db)
 ):
+    from zoneinfo import ZoneInfo
     from .tools_function import schedule_candidate_interview
     
     dt = parse_interview_datetime(req.interview_date, req.interview_time)
+    
+    # Validate that the selected interview time is in the future
+    try:
+        tz = ZoneInfo(req.timezone or "Asia/Kolkata")
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+    now_in_tz = datetime.now(tz).replace(tzinfo=None)
+    if dt <= now_in_tz:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot schedule an interview in the past. Please select a future time slot."
+        )
+
     teams_link = f"https://teams.microsoft.com/l/meetup-join/nmhirex-{req.job_candidate_id}"
     
     res = schedule_candidate_interview(
@@ -727,6 +769,7 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
 
 @router.post("/reschedule/{token}")
 def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depends(get_db)):
+    from zoneinfo import ZoneInfo
     from .models import JobCandidate
     from .tools_function import schedule_candidate_interview
     
@@ -739,6 +782,18 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
         
     dt = parse_interview_datetime(req.new_date, req.new_time)
     
+    # Validate that the selected reschedule time is in the future
+    try:
+        tz = ZoneInfo(req.timezone or "Asia/Kolkata")
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+    now_in_tz = datetime.now(tz).replace(tzinfo=None)
+    if dt <= now_in_tz:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot schedule an interview in the past. Please select a future time slot."
+        )
+
     teams_link = jc.interview_link or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{jc.id}"
     
     res = schedule_candidate_interview(

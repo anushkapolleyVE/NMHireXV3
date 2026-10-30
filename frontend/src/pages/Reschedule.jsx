@@ -28,7 +28,15 @@ const Reschedule = () => {
   const [meetingLink, setMeetingLink] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const getLocalDateStr = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = getLocalDateStr();
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -48,11 +56,10 @@ const Reschedule = () => {
           setMeetingLink(data.data.interview_link);
         }
 
-        // Fetch dates and 24h slots in parallel
-        const [datesRes, slotsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/scheduling/dates`).then(r => r.json()).catch(() => ({ dates: [] })),
-          fetch(`${API_BASE_URL}/scheduling/slots`).then(r => r.json()).catch(() => ({ slots: [] })),
-        ]);
+        // Fetch dates with timezone
+        const datesRes = await fetch(`${API_BASE_URL}/scheduling/dates?timezone=${encodeURIComponent(userTimezone)}`)
+          .then(r => r.json())
+          .catch(() => ({ dates: [] }));
 
         const fetchedDates = datesRes.dates || [];
         setDates(fetchedDates);
@@ -61,8 +68,6 @@ const Reschedule = () => {
         } else {
           setSelectedDate(todayStr);
         }
-
-        setSlots(slotsRes.slots || []);
       } catch (err) {
         console.error('Reschedule fetch error:', err);
         setError(err.message);
@@ -75,6 +80,19 @@ const Reschedule = () => {
       fetchAll();
     }
   }, [token]);
+
+  useEffect(() => {
+    if (selectedDate) {
+      fetch(`${API_BASE_URL}/scheduling/slots?date=${selectedDate}&timezone=${encodeURIComponent(userTimezone)}`)
+        .then(r => r.json())
+        .then(data => {
+          setSlots(data.slots || []);
+        })
+        .catch(err => {
+          console.error(err);
+        });
+    }
+  }, [selectedDate]);
 
   // Convert 24-hour "HH:MM" to "hh:mm AM/PM"
   const convert24To12 = (val24) => {
@@ -100,7 +118,28 @@ const Reschedule = () => {
     return `${h < 10 ? '0' + h : h}:${m}`;
   };
 
+  // Check if a given date & slot is in the past
+  const isSlotInPast = (dateStr, slot) => {
+    if (!dateStr || !slot) return false;
+    const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return false;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+
+    const [y, mon, d] = dateStr.split('-').map(Number);
+    const slotDate = new Date(y, mon - 1, d, h, m, 0, 0);
+    return slotDate.getTime() <= Date.now();
+  };
+
   const handleSelectSlot = (slot) => {
+    if (isSlotInPast(selectedDate, slot)) {
+      setError("This slot is already in the past. Please choose an upcoming time.");
+      return;
+    }
+    setError(null);
     setSelectedSlot(slot);
     setCustomTimeInput(convert12To24(slot));
   };
@@ -109,11 +148,31 @@ const Reschedule = () => {
     setCustomTimeInput(time24);
     if (time24) {
       const formatted12 = convert24To12(time24);
-      setSelectedSlot(formatted12);
+      if (isSlotInPast(selectedDate, formatted12)) {
+        setError("Selected time is in the past. Please choose a future time slot.");
+        setSelectedSlot(null);
+      } else {
+        setError(null);
+        setSelectedSlot(formatted12);
+      }
+    } else {
+      setSelectedSlot(null);
     }
   };
 
+  const handleSelectDate = (newDate) => {
+    setSelectedDate(newDate);
+    if (selectedSlot && isSlotInPast(newDate, selectedSlot)) {
+      setSelectedSlot(null);
+      setCustomTimeInput('');
+    }
+    setError(null);
+  };
+
   const filterSlot = (slot) => {
+    // Exclude any slot that is in the past
+    if (isSlotInPast(selectedDate, slot)) return false;
+
     if (selectedPeriod === 'all') return true;
     const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
     if (!match) return true;
@@ -134,6 +193,10 @@ const Reschedule = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedDate || !selectedSlot) return;
+    if (isSlotInPast(selectedDate, selectedSlot)) {
+      setError("Cannot reschedule an interview to a past time. Please choose an upcoming time.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -143,13 +206,13 @@ const Reschedule = () => {
         body: JSON.stringify({
           new_date: selectedDate,
           new_time: selectedSlot,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+          timezone: userTimezone
         })
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Failed to reschedule. Please try again.');
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Failed to reschedule. Please choose another slot.');
       }
 
       const resData = await res.json();
@@ -293,7 +356,7 @@ const Reschedule = () => {
               <div 
                 key={index} 
                 className={`date-pill ${isSelected ? 'active' : ''}`}
-                onClick={() => setSelectedDate(d.date)}
+                onClick={() => handleSelectDate(d.date)}
               >
                 <span className="dp-day-of-week">{dayOfWeek}</span>
                 <span className="dp-day">{day}</span>
@@ -319,7 +382,7 @@ const Reschedule = () => {
                 className="custom-input-field"
                 value={selectedDate || ''}
                 min={todayStr}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => handleSelectDate(e.target.value)}
               />
             </div>
             <div className="custom-input-group">
@@ -389,7 +452,11 @@ const Reschedule = () => {
               </button>
             );
           }) : (
-            <div className="no-slots">No slots in this period. Choose another period or enter custom time above.</div>
+            <div className="no-slots">
+              {selectedPeriod === 'morning' && selectedDate === todayStr
+                ? "Morning slots for today have already passed. Please select Afternoon, Evening, or pick another day."
+                : "No available slots for this period. Choose another period or enter a custom time above."}
+            </div>
           )}
         </div>
 
@@ -405,7 +472,7 @@ const Reschedule = () => {
           type="button"
           className="confirm-btn" 
           onClick={handleSubmit}
-          disabled={!selectedDate || !selectedSlot || isSubmitting}
+          disabled={!selectedDate || !selectedSlot || isSlotInPast(selectedDate, selectedSlot) || isSubmitting}
         >
           {isSubmitting ? 'Confirming Reschedule...' : 'Confirm New Time'}
         </button>

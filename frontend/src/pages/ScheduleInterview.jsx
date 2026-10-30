@@ -26,12 +26,20 @@ const ScheduleInterview = () => {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // Today in YYYY-MM-DD
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Today in local YYYY-MM-DD
+  const getLocalDateStr = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = getLocalDateStr();
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
 
   useEffect(() => {
-    // Fetch available dates
-    fetch(`${API_BASE_URL}/scheduling/dates`)
+    // Fetch available dates with candidate timezone
+    fetch(`${API_BASE_URL}/scheduling/dates?timezone=${encodeURIComponent(userTimezone)}`)
       .then(res => res.json())
       .then(data => {
         const fetchedDates = data.dates || [];
@@ -53,8 +61,8 @@ const ScheduleInterview = () => {
 
   useEffect(() => {
     if (selectedDate) {
-      // Fetch 24-hour slots for the selected date
-      fetch(`${API_BASE_URL}/scheduling/slots?date=${selectedDate}`)
+      // Fetch slots for the selected date with timezone
+      fetch(`${API_BASE_URL}/scheduling/slots?date=${selectedDate}&timezone=${encodeURIComponent(userTimezone)}`)
         .then(res => res.json())
         .then(data => {
           setSlots(data.slots || []);
@@ -89,8 +97,29 @@ const ScheduleInterview = () => {
     return `${h < 10 ? '0' + h : h}:${m}`;
   };
 
+  // Check if a given date & slot is in the past
+  const isSlotInPast = (dateStr, slot) => {
+    if (!dateStr || !slot) return false;
+    const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return false;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+
+    const [y, mon, d] = dateStr.split('-').map(Number);
+    const slotDate = new Date(y, mon - 1, d, h, m, 0, 0);
+    return slotDate.getTime() <= Date.now();
+  };
+
   // Handle slot pill selection
   const handleSelectSlot = (slot) => {
+    if (isSlotInPast(selectedDate, slot)) {
+      setError("This slot is already in the past. Please choose an upcoming time.");
+      return;
+    }
+    setError(null);
     setSelectedSlot(slot);
     setCustomTimeInput(convert12To24(slot));
   };
@@ -100,12 +129,33 @@ const ScheduleInterview = () => {
     setCustomTimeInput(time24);
     if (time24) {
       const formatted12 = convert24To12(time24);
-      setSelectedSlot(formatted12);
+      if (isSlotInPast(selectedDate, formatted12)) {
+        setError("Selected time is in the past. Please choose a future time slot.");
+        setSelectedSlot(null);
+      } else {
+        setError(null);
+        setSelectedSlot(formatted12);
+      }
+    } else {
+      setSelectedSlot(null);
     }
   };
 
-  // Slot filter for 24 hours
+  // Handle date selection change
+  const handleSelectDate = (newDate) => {
+    setSelectedDate(newDate);
+    if (selectedSlot && isSlotInPast(newDate, selectedSlot)) {
+      setSelectedSlot(null);
+      setCustomTimeInput('');
+    }
+    setError(null);
+  };
+
+  // Slot filter for 24 hours + exclude past slots
   const filterSlot = (slot) => {
+    // Exclude any slot that is in the past
+    if (isSlotInPast(selectedDate, slot)) return false;
+
     if (selectedPeriod === 'all') return true;
     const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
     if (!match) return true;
@@ -125,6 +175,10 @@ const ScheduleInterview = () => {
 
   const handleConfirm = () => {
     if (!selectedDate || !selectedSlot) return;
+    if (isSlotInPast(selectedDate, selectedSlot)) {
+      setError("Cannot schedule an interview in the past. Please choose an upcoming time.");
+      return;
+    }
     
     setSubmitting(true);
     setError(null);
@@ -138,11 +192,14 @@ const ScheduleInterview = () => {
         job_candidate_id: candidateId,
         interview_date: selectedDate,
         interview_time: selectedSlot,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+        timezone: userTimezone
       })
     })
-    .then(res => {
-      if (!res.ok) throw new Error("Failed to confirm slot. It might be already booked.");
+    .then(async res => {
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to confirm slot. It might be in the past or already booked.");
+      }
       return res.json();
     })
     .then(data => {
@@ -243,7 +300,7 @@ const ScheduleInterview = () => {
               <div 
                 key={index} 
                 className={`date-pill ${isSelected ? 'active' : ''}`}
-                onClick={() => setSelectedDate(d.date)}
+                onClick={() => handleSelectDate(d.date)}
               >
                 <span className="dp-day-of-week">{dayOfWeek}</span>
                 <span className="dp-day">{day}</span>
@@ -269,7 +326,7 @@ const ScheduleInterview = () => {
                 className="custom-input-field"
                 value={selectedDate || ''}
                 min={todayStr}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => handleSelectDate(e.target.value)}
               />
             </div>
             <div className="custom-input-group">
@@ -339,7 +396,11 @@ const ScheduleInterview = () => {
               </button>
             );
           }) : (
-            <div className="no-slots">No slots in this period. Choose another period or enter a custom time above.</div>
+            <div className="no-slots">
+              {selectedPeriod === 'morning' && selectedDate === todayStr
+                ? "Morning slots for today have already passed. Please select Afternoon, Evening, or pick another day."
+                : "No available slots for this period. Choose another period or enter a custom time above."}
+            </div>
           )}
         </div>
 
@@ -354,7 +415,7 @@ const ScheduleInterview = () => {
         <button 
           className="confirm-btn" 
           onClick={handleConfirm}
-          disabled={!selectedDate || !selectedSlot || submitting}
+          disabled={!selectedDate || !selectedSlot || isSlotInPast(selectedDate, selectedSlot) || submitting}
         >
           {submitting ? 'Confirming...' : 'Confirm Interview'}
         </button>
