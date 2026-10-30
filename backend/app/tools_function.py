@@ -1459,6 +1459,12 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             "failed": failed_count,
             "skipped": skipped_count,
             "invalid_phone": skipped_count,
+            "total_outreach": delivered_count + failed_count + skipped_count,
+            "delivery_rate": (
+                round((delivered_count / (delivered_count + failed_count + skipped_count)) * 100)
+                if (delivered_count + failed_count + skipped_count) > 0
+                else 100
+            ),
             "active_jobs": invites_sent,
             "candidates_screened": invites_sent,
             "strong_matches": interested,
@@ -2665,8 +2671,8 @@ def schedule_candidate_interview(
     if interview_link:
         job_candidate.interview_link = interview_link
     job_candidate.recruitment_status = "INTERVIEW_SCHEDULED"
-    job_candidate.reminder_24h_sent = False
-    job_candidate.reminder_1h_sent = False
+    job_candidate.reminder_24h_sent = True
+    job_candidate.reminder_1h_sent = True
     db.commit()
 
     candidate = db.get(Candidate, job_candidate.candidate_id)

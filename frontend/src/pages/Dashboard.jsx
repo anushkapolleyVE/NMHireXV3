@@ -321,7 +321,7 @@ export default function Dashboard() {
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Delivery Rate</p>
                     <p className="font-display text-2xl font-bold text-brand">
-                      {invitesSent > 0 ? `${Math.round((delivered / (delivered + failed || 1)) * 100)}%` : '100%'}
+                      {delivered + failed + skipped > 0 ? `${Math.round((delivered / (delivered + failed + skipped)) * 100)}%` : '100%'}
                     </p>
                   </div>
                 </div>
