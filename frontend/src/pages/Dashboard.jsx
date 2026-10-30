@@ -105,7 +105,15 @@ export default function Dashboard() {
     );
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (status, deliveryStatus) => {
+    if (deliveryStatus === 'FAILED' || status === 'FAILED' || status === 'FAILED_SEND') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/15 px-3 py-1 text-xs font-bold text-red-400 ring-1 ring-red-500/30">
+          <span className="size-1.5 rounded-full bg-red-400"></span>
+          Failed
+        </span>
+      );
+    }
     switch (status) {
       case 'INTERVIEW_SCHEDULED':
         return (
@@ -392,7 +400,7 @@ export default function Dashboard() {
                           {getDeliveryBadge(cand.delivery_status)}
                         </td>
                         <td className="py-4">
-                          {getStatusBadge(cand.status)}
+                          {getStatusBadge(cand.status, cand.delivery_status)}
                         </td>
                         <td className="py-4 text-xs">
                           {cand.interview_scheduled_at ? (

@@ -71,7 +71,14 @@ export default function Outreach() {
     const status = candidate.status;
     const intent = candidate.response_intent;
 
-    // Negative response
+    // Delivery failed
+    if (candidate.delivery_status === 'FAILED' || status === 'FAILED' || status === 'FAILED_SEND') {
+      return (
+        <span className="rounded-xl bg-red-500/10 px-4 py-2 text-sm font-bold text-red-400 ring-1 ring-red-500/30">
+          Delivery Failed
+        </span>
+      );
+    }
     if (
       status === 'NOT_INTERESTED' ||
       intent === 'NEGATIVE' ||

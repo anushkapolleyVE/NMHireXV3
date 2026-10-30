@@ -3591,23 +3591,11 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             "SKIPPED",
             "INVALID_PHONE",
             "SKIPPED_INVALID_PHONE",
+            "FAILED",
         }
 
         if has_outreach:
-            if status not in {"SKIPPED", "INVALID_PHONE", "SKIPPED_INVALID_PHONE"}:
-                invites_sent += 1
-
-            if status in {"INTERVIEW_SCHEDULED", "INTERVIEW", "INTERVIEW_COMPLETED"} or jc.interview_scheduled_at is not None:
-                meeting_scheduled += 1
-                interested += 1
-            elif status in {"INTERESTED", "INTERVIEW_LINK_SENT"}:
-                interested += 1
-            elif status == "NOT_INTERESTED":
-                not_interested += 1
-            elif status == "CONTACTED":
-                awaiting += 1
-
-            # Determine delivery status from latest outbound contact log
+            # Determine delivery status from latest outbound contact log FIRST
             latest_contact = db.scalar(
                 select(CandidateContact)
                 .where(
@@ -3621,15 +3609,34 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
             c_status = (latest_contact.status if latest_contact else ("DELIVERED" if status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"} else "SENT")).upper()
             if c_status in {"INVALID_PHONE", "SKIPPED", "SKIPPED_INVALID_PHONE"} or status in {"SKIPPED", "INVALID_PHONE", "SKIPPED_INVALID_PHONE"}:
                 delivery_status = "INVALID_PHONE"
+                display_status = "SKIPPED"
                 skipped_count += 1
-            elif c_status == "FAILED":
+            elif c_status == "FAILED" or status == "FAILED":
                 delivery_status = "FAILED"
+                display_status = "FAILED"
                 failed_count += 1
             elif c_status in {"DELIVERED", "READ"} or status in {"INTERESTED", "INTERVIEW_LINK_SENT", "INTERVIEW_SCHEDULED"}:
                 delivery_status = "DELIVERED"
+                display_status = status
                 delivered_count += 1
             else:
                 delivery_status = "SENT"
+                display_status = status
+
+            if status not in {"SKIPPED", "INVALID_PHONE", "SKIPPED_INVALID_PHONE"}:
+                invites_sent += 1
+
+            if status in {"INTERVIEW_SCHEDULED", "INTERVIEW", "INTERVIEW_COMPLETED"} or jc.interview_scheduled_at is not None:
+                meeting_scheduled += 1
+                interested += 1
+            elif status in {"INTERESTED", "INTERVIEW_LINK_SENT"}:
+                interested += 1
+            elif status == "NOT_INTERESTED":
+                not_interested += 1
+            elif status == "CONTACTED":
+                # Only count as awaiting reply if the outreach message did NOT fail to send/deliver
+                if delivery_status not in {"FAILED", "INVALID_PHONE"}:
+                    awaiting += 1
 
             if len(recent_candidates) < 40:
                 scheduled_str = (
@@ -3644,7 +3651,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
                     "name": cand.name or "Unnamed",
                     "role": cand.current_role or job.title or "Position",
                     "phone": cand.phone or "",
-                    "status": status,
+                    "status": display_status,
                     "delivery_status": delivery_status,
                     "interview_scheduled_at": scheduled_str,
                     "interview_link": jc.interview_link,
@@ -4610,6 +4617,9 @@ def handle_whatsapp_webhook(
                     target_contact.status = "FAILED"
                     err_msg = data_dict.get("errorMessage") or data_dict.get("error") or find_value(payload, ["errorMessage", "error", "error_message", "reason"]) or "Delivery failed"
                     target_contact.message = f"Failed: {err_msg}"
+                    jc_rec = db.get(JobCandidate, target_contact.job_candidate_id)
+                    if jc_rec and jc_rec.recruitment_status in {None, "NEW", "CONTACTED"}:
+                        jc_rec.recruitment_status = "FAILED"
                 elif "READ" in status_clean:
                     target_contact.status = "READ"
                     target_contact.read_at = datetime.utcnow()
@@ -4642,6 +4652,10 @@ def handle_whatsapp_webhook(
                             delivered_at=datetime.utcnow() if is_delivered else None,
                         )
                         db.add(new_contact)
+                        if is_failed:
+                            target_jc = db.get(JobCandidate, jc_uuid)
+                            if target_jc and target_jc.recruitment_status in {None, "NEW", "CONTACTED"}:
+                                target_jc.recruitment_status = "FAILED"
                         db.commit()
                         print(f"WEBHOOK: Created contact for {jc_uuid} with status {new_contact.status}")
                         return {
@@ -5064,7 +5078,7 @@ def get_outreach_candidates(
             "name": candidate.name or "Unnamed Candidate",
             "phone": candidate.phone or "",
             "job": job.title or "Unknown Role",
-            "status": jc.recruitment_status,
+            "status": "FAILED" if delivery_status == "FAILED" else jc.recruitment_status,
             "delivery_status": delivery_status,
             "error_message": latest_outbound.message if (latest_outbound and c_status == "FAILED") else None,
             "interview_scheduled_at": (
@@ -5662,6 +5676,19 @@ def send_naukri_outreach_array(
         success, response_body, provider_message_id = _send_whatsapp_payload(payload)
 
         if not success:
+            failed_contact = CandidateContact(
+                job_candidate_id=job_candidate.id,
+                channel="WHATSAPP",
+                message_type="OUTBOUND",
+                message=f"Failed to send template {template_name}: {response_body}",
+                provider="NMVE",
+                status="FAILED",
+                sent_at=datetime.utcnow(),
+            )
+            db.add(failed_contact)
+            job_candidate.recruitment_status = "FAILED"
+            db.commit()
+
             results.append({
                 "no": serial_no,
                 "name": name,
