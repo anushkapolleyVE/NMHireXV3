@@ -419,12 +419,16 @@ def add_candidate(
         is_write=True,
     )
 
-    # Capture registrationUrl
+    # Capture registrationUrl / testUrl
     reg_url = (
         res.get("registrationUrl")
         or res.get("registration_url")
-        or (res.get("data") or {}).get("registrationUrl")
-        or (res.get("data") or {}).get("registration_url")
+        or res.get("testUrl")
+        or res.get("test_url")
+        or (res.get("data") if isinstance(res.get("data"), dict) else {}).get("registrationUrl")
+        or (res.get("data") if isinstance(res.get("data"), dict) else {}).get("registration_url")
+        or (res.get("data") if isinstance(res.get("data"), dict) else {}).get("testUrl")
+        or (res.get("result") if isinstance(res.get("result"), dict) else {}).get("registrationUrl")
     )
     if reg_url:
         res["registrationUrl"] = reg_url

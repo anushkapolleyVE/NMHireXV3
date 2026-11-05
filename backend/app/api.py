@@ -733,7 +733,7 @@ def api_scheduling_confirm(
     cand = db.get(Candidate, jc.candidate_id) if jc else None
     job = db.get(Job, jc.job_id) if jc and jc.job_id else None
 
-    if cand and settings.NMHIREX_GATEWAY_URL and settings.NMHIREX_API_KEY:
+    if cand:
         try:
             cand_name = cand.name or "Candidate"
             cand_phone = cand.phone or ""
@@ -764,7 +764,9 @@ def api_scheduling_confirm(
             import logging
             logging.getLogger("nmhirex").warning("Gateway add_candidate failed during slot confirmation: %s", gw_err)
 
-    teams_link = meeting_url or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{req.job_candidate_id}"
+    # Send registrationUrl / test URL in place of Teams link (do not send teams)
+    interview_link = meeting_url or f"https://nminterview.com/candidate/test-interview/{req.job_candidate_id}"
+    teams_link = interview_link
     
     res = schedule_candidate_interview(
         db=db,
@@ -838,7 +840,10 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
             detail="Cannot schedule an interview in the past. Please select a future time slot."
         )
 
-    teams_link = jc.interview_link or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{jc.id}"
+    existing_link = jc.interview_link
+    if existing_link and "teams.microsoft.com" in existing_link:
+        existing_link = None
+    teams_link = existing_link or f"https://nminterview.com/candidate/test-interview/{jc.id}"
     
     res = schedule_candidate_interview(
         db=db,

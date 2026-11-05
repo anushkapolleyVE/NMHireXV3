@@ -114,6 +114,7 @@ class WhatsAppGatewayClient:
             self._base_url
             or os.getenv("NMHIREX_GATEWAY_URL")
             or getattr(settings, "NMHIREX_GATEWAY_URL", "")
+            or "https://nmve.io/whatsapp"
         )
         return url.rstrip("/")
 
@@ -123,6 +124,7 @@ class WhatsAppGatewayClient:
             self._api_key
             or os.getenv("NMHIREX_API_KEY")
             or getattr(settings, "NMHIREX_API_KEY", "")
+            or getattr(settings, "WHATSAPP_API_KEY", "")
         )
 
     @property
