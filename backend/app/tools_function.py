@@ -3266,11 +3266,19 @@ def send_naukri_outreach_array(
     skipped_count = 0
 
     for idx, item in enumerate(candidate_list):
-        name = str(item.get("name") or "").strip()
-        role = str(item.get("role") or (job.title if job else "the position")).strip()
+        name = str(item.get("user_name") or item.get("name") or "").strip()
+        email = str(item.get("email") or "").strip()
+        company = str(item.get("current_company") or item.get("company") or "").strip()
+        role = str(item.get("job_role") or item.get("role") or (job.title if job else "the position")).strip()
         
         # Phone can be provided as phone, phone_number, mobile, or in the 'no' field
-        raw_phone = str(item.get("phone") or item.get("phone_number") or item.get("mobile") or "").strip()
+        raw_phone = str(
+            item.get("contact_no")
+            or item.get("phone")
+            or item.get("phone_number")
+            or item.get("mobile")
+            or ""
+        ).strip()
         serial_no = item.get("no", idx + 1)
         if not raw_phone and item.get("no"):
             no_val = str(item.get("no")).strip()
@@ -3333,6 +3341,8 @@ def send_naukri_outreach_array(
                     name=name,
                     phone=raw_phone,
                     current_role=role,
+                email=email if email else None,
+                current_company=company if company else None,
                 )
                 db.add(cand_skipped)
                 db.flush()
@@ -3396,6 +3406,8 @@ def send_naukri_outreach_array(
                 name=name,
                 phone=clean_phone,
                 current_role=role,
+                email=email if email else None,
+                current_company=company if company else None,
             )
             db.add(candidate)
             db.flush()

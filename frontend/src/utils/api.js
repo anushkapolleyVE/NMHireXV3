@@ -241,3 +241,108 @@ export const sendNaukriOutreach = async ({ jobId, candidates, companyName }) => 
   return res.json();
 };
 
+
+
+// --------------------------------------------------
+// WHATSAPP INTEGRATION GATEWAY
+// --------------------------------------------------
+
+export const gatewayAddCandidate = async (candidateInput) => {
+  const response = await fetch(`${API_BASE_URL}/gateway/candidates`, {
+    method: "POST",
+    headers: {
+      ...getHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(candidateInput),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        "Failed to create candidate and schedule interview."
+      )
+    );
+  }
+
+  return response.json();
+};
+
+export const gatewayGetSchedules = async (filters = {}) => {
+  const cleanParams = new URLSearchParams();
+  Object.entries(filters).forEach(([key, val]) => {
+    if (val !== undefined && val !== null && val !== "") {
+      cleanParams.append(key, String(val));
+    }
+  });
+
+  const url = `${API_BASE_URL}/gateway/schedules${
+    cleanParams.toString() ? `?${cleanParams.toString()}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, "Failed to fetch scheduled interviews.")
+    );
+  }
+
+  return response.json();
+};
+
+export const gatewayGetInterviewResults = async (filters = {}) => {
+  const cleanParams = new URLSearchParams();
+  Object.entries(filters).forEach(([key, val]) => {
+    if (val !== undefined && val !== null && val !== "") {
+      cleanParams.append(key, String(val));
+    }
+  });
+
+  const url = `${API_BASE_URL}/gateway/interview-results${
+    cleanParams.toString() ? `?${cleanParams.toString()}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, "Failed to fetch interview results.")
+    );
+  }
+
+  return response.json();
+};
+
+export const gatewayGetJoinedInterviews = async (filters = {}) => {
+  const cleanParams = new URLSearchParams();
+  Object.entries(filters).forEach(([key, val]) => {
+    if (val !== undefined && val !== null && val !== "") {
+      cleanParams.append(key, String(val));
+    }
+  });
+
+  const url = `${API_BASE_URL}/gateway/interviews-joined${
+    cleanParams.toString() ? `?${cleanParams.toString()}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, "Failed to fetch joined interview reports.")
+    );
+  }
+
+  return response.json();
+};

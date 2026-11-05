@@ -98,10 +98,6 @@ class Settings(BaseSettings):
     WHATSAPP_TEST_MODE: bool = False
     WHATSAPP_TEST_NUMBER: str = ""
 
-    # Test number.
-    # You can override this from Render Environment Variables.
-   
-
     # ---------------------------------------------------------
     # FRONTEND / SCHEDULING
     # ---------------------------------------------------------
@@ -112,6 +108,17 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------
     # Optional webhook verification secret.
     WEBHOOK_SECRET: str = ""
+
+    # ---------------------------------------------------------
+    # WHATSAPP INTEGRATION GATEWAY
+    # ---------------------------------------------------------
+    # Gateway base URL without trailing slash (e.g. https://gateway.example.com)
+    NMHIREX_GATEWAY_URL: str = ""
+    # Bearer token in format wa_live_<keyId>_<secret>
+    NMHIREX_API_KEY: str = ""
+    NMHIREX_GATEWAY_TIMEOUT_SECONDS: int = 25
+    # Default requisition ID if not provided by candidate or job (e.g. 506)
+    NMHIREX_DEFAULT_REQUISITION_ID: int = 506
 
 
 settings = Settings()

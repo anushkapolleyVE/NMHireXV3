@@ -11,6 +11,7 @@ import Register from './pages/Register';
 import ScheduleInterview from './pages/ScheduleInterview';
 import TopCandidates from './pages/TopCandidates';
 import Reschedule from './pages/Reschedule';
+import WhatsAppGateway from './pages/WhatsAppGateway';
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
       <Route path="/schedule/:candidateId" element={<ScheduleInterview />} />
       <Route path="/reschedule/:token" element={<Reschedule />} />
       <Route path="/requisitions/:vereq/matches" element={<TopCandidates />} />
+      <Route path="/whatsapp-gateway" element={<WhatsAppGateway />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

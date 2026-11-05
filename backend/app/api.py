@@ -721,7 +721,50 @@ def api_scheduling_confirm(
             detail="Cannot schedule an interview in the past. Please select a future time slot."
         )
 
-    teams_link = f"https://teams.microsoft.com/l/meetup-join/nmhirex-{req.job_candidate_id}"
+    # -------------------------------------------------------------
+    # Call WhatsApp Gateway /add-candidate and use registrationUrl
+    # in place of Teams meeting link (dont send teams now)
+    # -------------------------------------------------------------
+    meeting_url = None
+    from .models import JobCandidate, Candidate, Job
+    from .gateway_service import add_candidate
+    
+    jc = db.get(JobCandidate, req.job_candidate_id)
+    cand = db.get(Candidate, jc.candidate_id) if jc else None
+    job = db.get(Job, jc.job_id) if jc and jc.job_id else None
+
+    if cand and settings.NMHIREX_GATEWAY_URL and settings.NMHIREX_API_KEY:
+        try:
+            cand_name = cand.name or "Candidate"
+            cand_phone = cand.phone or ""
+            cand_email = cand.email or f"{cand_phone or 'candidate'}@nmhirex.com"
+            cand_company = cand.current_company or ""
+            cand_role = cand.current_role or (job.title if job else "")
+            req_id = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
+
+            gw_payload = {
+                "user_name": cand_name,
+                "email": cand_email,
+                "contact_no": cand_phone,
+                "current_company": cand_company,
+                "interview_date": dt.strftime("%Y-%m-%d"),
+                "interview_time": dt.strftime("%H:%M"),
+                "technical_round": 1,
+                "one2one_round": 1,
+                "comm_skill_rating": 4,
+                "cultural_fit_rating": 4,
+                "operation": "addcandidate",
+                "request_id": req_id,
+                "requisition_id": req_id,
+                "job_role": cand_role,
+            }
+            gw_res = add_candidate(gw_payload)
+            meeting_url = gw_res.get("registrationUrl")
+        except Exception as gw_err:
+            import logging
+            logging.getLogger("nmhirex").warning("Gateway add_candidate failed during slot confirmation: %s", gw_err)
+
+    teams_link = meeting_url or f"https://teams.microsoft.com/l/meetup-join/nmhirex-{req.job_candidate_id}"
     
     res = schedule_candidate_interview(
         db=db,
@@ -885,7 +928,13 @@ async def api_send_outreach_endpoint(
             candidates_list = body["candidates"]
             job_id = body.get("job_id")
             company_name = body.get("company_name")
-        elif "name" in body and ("phone" in body or "no" in body or "phone_number" in body or "mobile" in body):
+        elif ("name" in body or "user_name" in body) and (
+            "phone" in body
+            or "no" in body
+            or "phone_number" in body
+            or "mobile" in body
+            or "contact_no" in body
+        ):
             candidates_list = [body]
             job_id = body.get("job_id")
             company_name = body.get("company_name")
@@ -919,3 +968,202 @@ async def api_send_outreach_endpoint(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
 
+
+
+# ============================================================
+# WHATSAPP INTEGRATION GATEWAY API ROUTES
+# ============================================================
+from .gateway_client import (
+    GatewayError,
+    GatewayAuthError,
+    GatewayForbiddenError,
+    GatewayValidationError,
+    GatewayRateLimitError,
+    GatewayServerError,
+    GatewayConnectionError,
+)
+from .gateway_service import (
+    fetch_schedules,
+    fetch_interview_results,
+    add_candidate,
+    fetch_joined_interview_data,
+)
+
+
+def _handle_gateway_exception(exc: Exception):
+    """Translates typed GatewayError exceptions into FastAPI HTTPExceptions."""
+    if isinstance(exc, GatewayError):
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "success": False,
+                "message": exc.message,
+                "requestId": exc.request_id,
+                "code": exc.error_code or f"HTTP_{exc.status_code}",
+            },
+        )
+    raise HTTPException(
+        status_code=500,
+        detail={
+            "success": False,
+            "message": str(exc),
+            "requestId": None,
+            "code": "INTERNAL_SERVER_ERROR",
+        },
+    )
+
+
+@router.post("/gateway/schedules")
+def api_post_gateway_schedules(filters: dict = Body(default={})):
+    """API 1: List scheduled interviews with pagination loop (POST)."""
+    try:
+        return fetch_schedules(filters)
+    except Exception as exc:
+        _handle_gateway_exception(exc)
+
+
+@router.get("/gateway/schedules")
+def api_get_gateway_schedules(
+    page: int = Query(1),
+    pageSize: int = Query(50),
+    startDate: str | None = Query(None),
+    endDate: str | None = Query(None),
+    date: str | None = Query(None),
+    dateType: str | None = Query("interview_date"),
+    is_registered: bool | None = Query(None),
+    requisition_id: str | None = Query(None),
+    candidate_email: str | None = Query(None),
+    added_by_email: str | None = Query(None),
+    search: str | None = Query(None),
+    all: bool | None = Query(None),
+    auto_paginate: bool = Query(True),
+):
+    """API 1: List scheduled interviews with query parameters (GET)."""
+    filters = {
+        "page": page,
+        "pageSize": pageSize,
+        "dateType": dateType,
+    }
+    if startDate:
+        filters["startDate"] = startDate
+    if endDate:
+        filters["endDate"] = endDate
+    if date:
+        filters["date"] = date
+    if is_registered is not None:
+        filters["is_registered"] = is_registered
+    if requisition_id:
+        filters["requisition_id"] = requisition_id
+    if candidate_email:
+        filters["candidate_email"] = candidate_email
+    if added_by_email:
+        filters["added_by_email"] = added_by_email
+    if search:
+        filters["search"] = search
+    if all is not None:
+        filters["all"] = all
+
+    try:
+        return fetch_schedules(filters, auto_paginate=auto_paginate)
+    except Exception as exc:
+        _handle_gateway_exception(exc)
+
+
+@router.post("/gateway/interview-results")
+def api_post_gateway_interview_results(filters: dict = Body(default={})):
+    """API 2: Retrieve interview results with pagination loop (POST)."""
+    try:
+        return fetch_interview_results(filters)
+    except Exception as exc:
+        _handle_gateway_exception(exc)
+
+
+@router.get("/gateway/interview-results")
+def api_get_gateway_interview_results(
+    page: int = Query(1),
+    pageSize: int = Query(50),
+    startDate: str | None = Query(None),
+    endDate: str | None = Query(None),
+    date: str | None = Query(None),
+    requisition_id: str | None = Query(None),
+    candidate_email: str | None = Query(None),
+    user_id: str | None = Query(None),
+    added_by_email: str | None = Query(None),
+    test_type: int | None = Query(None),
+    result: str | None = Query(None),
+    search: str | None = Query(None),
+    all: bool | None = Query(None),
+    auto_paginate: bool = Query(True),
+):
+    """API 2: Retrieve interview results with query parameters (GET)."""
+    filters = {
+        "page": page,
+        "pageSize": pageSize,
+    }
+    if startDate:
+        filters["startDate"] = startDate
+    if endDate:
+        filters["endDate"] = endDate
+    if date:
+        filters["date"] = date
+    if requisition_id:
+        filters["requisition_id"] = requisition_id
+    if candidate_email:
+        filters["candidate_email"] = candidate_email
+    if user_id:
+        filters["user_id"] = user_id
+    if added_by_email:
+        filters["added_by_email"] = added_by_email
+    if test_type is not None:
+        filters["test_type"] = test_type
+    if result:
+        filters["result"] = result
+    if search:
+        filters["search"] = search
+    if all is not None:
+        filters["all"] = all
+
+    try:
+        return fetch_interview_results(filters, auto_paginate=auto_paginate)
+    except Exception as exc:
+        _handle_gateway_exception(exc)
+
+
+@router.get("/gateway/interviews-joined")
+def api_get_gateway_joined_interviews(
+    startDate: str | None = Query(None),
+    endDate: str | None = Query(None),
+    requisition_id: str | None = Query(None),
+    search: str | None = Query(None),
+):
+    """Joins scheduled interviews and interview results (Schedule ID + Requisition ID)."""
+    filters = {}
+    if startDate:
+        filters["startDate"] = startDate
+    if endDate:
+        filters["endDate"] = endDate
+    if requisition_id:
+        filters["requisition_id"] = requisition_id
+    if search:
+        filters["search"] = search
+
+    try:
+        return fetch_joined_interview_data(filters)
+    except Exception as exc:
+        _handle_gateway_exception(exc)
+
+
+@router.post("/gateway/add-candidate")
+@router.post("/gateway/candidates")
+def api_post_gateway_add_candidate(candidate_input: dict = Body(...)):
+    """API 3: Create candidate and schedule interview on WhatsApp Gateway (WRITE)."""
+    try:
+        res = add_candidate(candidate_input)
+        return {
+            "success": True,
+            "message": "Candidate created and interview scheduled successfully.",
+            "registrationUrl": res.get("registrationUrl"),
+            "data": res,
+        }
+    except Exception as exc:
+        _handle_gateway_exception(exc)

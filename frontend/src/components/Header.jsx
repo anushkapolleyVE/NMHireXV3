@@ -26,6 +26,7 @@ export default function Header({ showNav = true }) {
         { name: 'Send Outreach', path: '/outreach/send' },
         { name: 'Outreach Responses', path: '/outreach' },
         { name: 'Candidates', path: '/candidates' },
+        { name: 'WhatsApp Gateway', path: '/whatsapp-gateway' },
         { name: 'Recruiters', path: '/admin' }
       ]
     : [
@@ -33,6 +34,7 @@ export default function Header({ showNav = true }) {
         { name: 'Send Outreach', path: '/outreach/send' },
         { name: 'Outreach Responses', path: '/outreach' },
         { name: 'Candidates', path: '/candidates' },
+        { name: 'WhatsApp Gateway', path: '/whatsapp-gateway' },
       ];
 
 
