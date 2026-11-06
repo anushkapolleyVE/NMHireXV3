@@ -1647,10 +1647,13 @@ def _send_whatsapp_payload(
         "utf-8"
     )
 
+    headers = _whatsapp_headers()
+    print(f"[WhatsApp] Sending to {payload.get('to')} using messaging key: {api_key[:14]}... on {url}")
+
     request = urllib.request.Request(
         url,
         data=data,
-        headers=_whatsapp_headers(),
+        headers=headers,
         method="POST",
     )
 

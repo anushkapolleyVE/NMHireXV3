@@ -1,11 +1,14 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+backend_env = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
     """NM-HireX application settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(backend_env), ".env"),
         extra="ignore",
     )
 
