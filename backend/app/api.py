@@ -782,7 +782,7 @@ def api_scheduling_confirm(
             logging.getLogger("nmhirex").warning("Gateway add_candidate failed during slot confirmation: %s", gw_err)
 
     # Send registrationUrl / test URL in place of Teams link (do not send teams)
-    interview_link = meeting_url or f"https://nminterview.com/candidate/test-interview/{req.job_candidate_id}"
+    interview_link = meeting_url or "https://interview.teckvalley.com/"
     teams_link = interview_link
     
     res = schedule_candidate_interview(
@@ -860,7 +860,7 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
     existing_link = jc.interview_link
     if existing_link and "teams.microsoft.com" in existing_link:
         existing_link = None
-    teams_link = existing_link or f"https://nminterview.com/candidate/test-interview/{jc.id}"
+    teams_link = existing_link or "https://interview.teckvalley.com/"
     
     res = schedule_candidate_interview(
         db=db,

@@ -90,7 +90,7 @@ def test_add_candidate_payload_structure():
 
     assert called_endpoint == "/api/integrations/whatsapp/raw/add-candidate", f"Wrong endpoint: {called_endpoint}"
     assert payload["request_id"] == "e8d25f71-6c43-4b95-a102-39c81e7d23a1", f"request_id mismatch: {payload['request_id']}"
-    assert payload["requisition_id"] == "c1a93b4e-7f12-4298-9031-15c2d1b827e4", f"requisition_id mismatch: {payload['requisition_id']}"
+    assert payload["requisition_id"] == 506, f"requisition_id must be positive integer (got {payload['requisition_id']})"
     assert payload["operation"] == "addcandidate", f"operation mismatch: {payload['operation']}"
     assert payload["technical_round"] == 1, f"technical_round mismatch: {payload['technical_round']}"
     assert payload["one2one_round"] == 1, f"one2one_round mismatch: {payload['one2one_round']}"

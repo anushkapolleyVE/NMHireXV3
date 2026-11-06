@@ -40,7 +40,7 @@ def check_interview_reminders():
 
             interview_link_display = jc.interview_link
             if interview_link_display and "teams.microsoft.com" in interview_link_display:
-                interview_link_display = f"https://nminterview.com/candidate/test-interview/{jc.id}"
+                interview_link_display = "https://interview.teckvalley.com/"
             teams_part = f"\nInterview Link: {interview_link_display}" if interview_link_display else ""
             frontend_url = getattr(settings, 'FRONTEND_URL', 'https://nm-hire-xv-3-c4m5.vercel.app').rstrip('/')
             if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:

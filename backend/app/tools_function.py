@@ -2681,9 +2681,9 @@ def schedule_candidate_interview(
         if "teams.microsoft.com" not in interview_link:
             job_candidate.interview_link = interview_link
         else:
-            job_candidate.interview_link = f"https://nminterview.com/candidate/test-interview/{job_candidate.id}"
+            job_candidate.interview_link = "https://interview.teckvalley.com/"
     elif not job_candidate.interview_link or "teams.microsoft.com" in (job_candidate.interview_link or ""):
-        job_candidate.interview_link = f"https://nminterview.com/candidate/test-interview/{job_candidate.id}"
+        job_candidate.interview_link = "https://interview.teckvalley.com/"
     job_candidate.recruitment_status = "INTERVIEW_SCHEDULED"
     job_candidate.reminder_24h_sent = False
     job_candidate.reminder_1h_sent = False

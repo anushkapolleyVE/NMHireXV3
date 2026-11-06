@@ -370,14 +370,18 @@ def add_candidate(
         request_id_val = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
 
     requisition_id_input = candidate_input.get("requisition_id")
+    requisition_id_val = None
     if requisition_id_input is not None and str(requisition_id_input).strip():
         req_str = str(requisition_id_input).strip()
         try:
-            requisition_id_val = int(req_str)
+            parsed_id = int(req_str)
+            if parsed_id > 0:
+                requisition_id_val = parsed_id
         except (ValueError, TypeError):
-            requisition_id_val = req_str
-    else:
-        requisition_id_val = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
+            requisition_id_val = None
+
+    if requisition_id_val is None:
+        requisition_id_val = int(getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506))
 
     # 8. Build full payload adhering strictly to the user specification
     payload: dict[str, Any] = {
