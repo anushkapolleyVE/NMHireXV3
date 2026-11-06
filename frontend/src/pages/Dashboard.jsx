@@ -43,7 +43,10 @@ export default function Dashboard() {
     {
       "name": "Rahul Sharma",
       "role": "Software Engineer",
-      "no": "917439717970"
+      "no": "917439717970",
+      "email": "rahul@example.com",
+      "company": "Acme Corp",
+      "experience": 5
     }
   ]'`;
 

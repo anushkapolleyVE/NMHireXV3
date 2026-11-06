@@ -120,11 +120,14 @@ class WhatsAppGatewayClient:
 
     @property
     def api_key(self) -> str:
+        # STRICTLY Key 2: Used only for Gateway APIs (/add-candidate to generate test URL, schedules, results)
+        # Never falls back to WHATSAPP_API_KEY (Key 1) to prevent 403 Forbidden permission errors.
         return (
             self._api_key
+            or os.getenv("NMHIREX_GATEWAY_API_KEY")
+            or getattr(settings, "NMHIREX_GATEWAY_API_KEY", "")
             or os.getenv("NMHIREX_API_KEY")
             or getattr(settings, "NMHIREX_API_KEY", "")
-            or getattr(settings, "WHATSAPP_API_KEY", "")
         )
 
     @property
@@ -198,7 +201,7 @@ class WhatsAppGatewayClient:
         key = self.api_key
         if not key:
             raise GatewayAuthError(
-                "NMHIREX_API_KEY is not configured. Set it in .env or environment.",
+                "NMHIREX_GATEWAY_API_KEY (or NMHIREX_API_KEY) is not configured. Set it in .env or environment.",
                 request_id=None,
             )
 

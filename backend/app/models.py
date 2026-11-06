@@ -80,6 +80,7 @@ class Job(Base):
     status: Mapped[str] = mapped_column(
         String(50), default="ACTIVE", nullable=False
     )
+    requisition_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
@@ -154,6 +155,10 @@ class JobCandidate(Base):
         DateTime(timezone=True)
     )
     interview_link: Mapped[str | None] = mapped_column(Text)
+    registration_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_candidate_status: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    requisition_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     reschedule_token: Mapped[str | None] = mapped_column(String(36), unique=True, index=True)
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)

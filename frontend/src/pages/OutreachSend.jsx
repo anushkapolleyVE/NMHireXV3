@@ -11,7 +11,7 @@ const STATUS_META = {
   FAILED_TEST_MODE_NO_NUMBER: { label: 'No test number',  color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
 };
 
-const EMPTY_ROW = { no: '', name: '', role: '', phone: '' };
+const EMPTY_ROW = { no: '', name: '', role: '', phone: '', email: '', company: '', experience: '' };
 
 export default function OutreachSend() {
   const [jobs, setJobs] = useState([]);
@@ -53,13 +53,16 @@ export default function OutreachSend() {
       const parsed = JSON.parse(jsonText);
       const list = Array.isArray(parsed) ? parsed : (parsed.candidates || [parsed]);
       const mapped = list.map((item, idx) => {
-        const phoneVal = item.phone || (typeof item.no === 'string' && item.no.length >= 6 ? item.no : (String(item.no || '').length >= 6 ? String(item.no) : ''));
+        const phoneVal = item.phone || item.contact_no || item.mobile || (typeof item.no === 'string' && item.no.length >= 6 ? item.no : (String(item.no || '').length >= 6 ? String(item.no) : ''));
         const noVal = (typeof item.no === 'number' || (typeof item.no === 'string' && item.no.length < 6)) ? item.no : (idx + 1);
         return {
           no: noVal,
-          name: item.name ?? '',
-          role: item.role ?? '',
+          name: item.name || item.user_name || '',
+          role: item.role || item.job_role || '',
           phone: phoneVal,
+          email: item.email || '',
+          company: item.company || item.current_company || '',
+          experience: item.experience !== undefined ? item.experience : (item.total_experience_years !== undefined ? item.total_experience_years : ''),
         };
       });
       setRows(mapped);
@@ -72,13 +75,26 @@ export default function OutreachSend() {
   const handleSend = async () => {
     setError('');
     setResult(null);
-    const candidates = rows.filter(r => r.name.trim() && (r.phone.trim() || String(r.no).length >= 6)).map(r => ({
-      no: r.no,
-      name: r.name.trim(),
-      role: r.role.trim() || 'Software Engineer',
-      phone: (r.phone.trim() || String(r.no)).trim(),
-    }));
-    if (candidates.length === 0) { setError('Add at least one candidate with a name and phone number.'); return; }
+    const candidates = rows.filter(r => (r.name || '').trim() && ((r.phone || '').trim() || String(r.no).length >= 6)).map(r => {
+      const cand = {
+        no: r.no,
+        name: r.name.trim(),
+        role: r.role.trim() || 'Software Engineer',
+        phone: (r.phone.trim() || String(r.no)).trim(),
+      };
+      if (r.email && r.email.trim()) cand.email = r.email.trim();
+      if (r.company && r.company.trim()) cand.company = r.company.trim();
+      if (r.experience !== '' && r.experience !== undefined && r.experience !== null) {
+        const parsedExp = Number(r.experience);
+        cand.experience = !isNaN(parsedExp) ? parsedExp : r.experience;
+      }
+      return cand;
+    });
+
+    if (candidates.length === 0) {
+      setError('Add at least one candidate with a name and phone number.');
+      return;
+    }
     setSending(true);
     try {
       const res = await sendNaukriOutreach({
@@ -103,7 +119,7 @@ export default function OutreachSend() {
       <div className="glow-bg bottom-[-20%] right-[-10%] animate-pulse-slow"
         style={{ animationDelay: '2s', background: 'radial-gradient(circle, rgba(20,184,166,0.08) 0%, rgba(59,130,246,0.04) 40%, transparent 70%)' }} />
       <Header />
-      <main className="relative z-10 mx-auto max-w-4xl px-5 py-8 sm:px-8">
+      <main className="relative z-10 mx-auto max-w-5xl px-5 py-8 sm:px-8">
 
         <div className="mb-10 animate-slide-up opacity-0-init animate-delay-100">
           <div className="flex items-center gap-3 mb-3">
@@ -166,35 +182,53 @@ export default function OutreachSend() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs font-bold uppercase tracking-widest text-slate-500 border-b border-slate-800">
-                    <th className="px-4 py-3 text-left w-14">#</th>
-                    <th className="px-4 py-3 text-left">Name</th>
-                    <th className="px-4 py-3 text-left">Role</th>
-                    <th className="px-4 py-3 text-left">Phone</th>
-                    <th className="px-4 py-3 w-10" />
+                    <th className="px-3 py-3 text-left w-12">#</th>
+                    <th className="px-3 py-3 text-left min-w-[140px]">Name *</th>
+                    <th className="px-3 py-3 text-left min-w-[130px]">Role</th>
+                    <th className="px-3 py-3 text-left min-w-[130px]">Phone *</th>
+                    <th className="px-3 py-3 text-left min-w-[150px]">Email</th>
+                    <th className="px-3 py-3 text-left min-w-[120px]">Company</th>
+                    <th className="px-3 py-3 text-left w-20">Exp (Yrs)</th>
+                    <th className="px-3 py-3 w-8" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {rows.map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-800/30 transition-colors group">
-                      <td className="px-4 py-2 text-slate-500 font-mono text-xs">{idx + 1}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2 text-slate-500 font-mono text-xs">{idx + 1}</td>
+                      <td className="px-3 py-2">
                         <input type="text" value={row.name} onChange={e => updateRow(idx, 'name', e.target.value)}
                           placeholder="Rahul Sharma"
-                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0" />
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm" />
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <input type="text" value={row.role} onChange={e => updateRow(idx, 'role', e.target.value)}
                           placeholder="Software Engineer"
-                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0" />
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm" />
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <input type="tel" value={row.phone} onChange={e => updateRow(idx, 'phone', e.target.value)}
                           placeholder="917439717970"
-                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono" />
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm" />
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
+                        <input type="email" value={row.email || ''} onChange={e => updateRow(idx, 'email', e.target.value)}
+                          placeholder="rahul@example.com"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="text" value={row.company || ''} onChange={e => updateRow(idx, 'company', e.target.value)}
+                          placeholder="Acme Corp"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="number" min="0" step="0.5" value={row.experience !== undefined ? row.experience : ''} onChange={e => updateRow(idx, 'experience', e.target.value)}
+                          placeholder="5"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm" />
+                      </td>
+                      <td className="px-3 py-2 text-right">
                         <button onClick={() => removeRow(idx)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-red-400">
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-red-400 p-1">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                           </svg>
@@ -216,11 +250,20 @@ export default function OutreachSend() {
           ) : (
             <div className="p-5">
               <p className="text-xs text-slate-500 mb-3">
-                Paste a JSON array: <code className="text-brand">[{"{"}{"\""}no{"\""}: 1, {"\""}name{"\""}: {"\""}...{"\""},  {"\""}role{"\""}: {"\""}...{"\""},  {"\""}phone{"\""}: {"\""}...{"\""}{"}"}, ...]</code>
+                Paste a JSON array matching the <code className="text-brand">/api/outreach/send-array</code> specification:
               </p>
               <textarea id="outreach-json-input" value={jsonText} onChange={e => { setJsonText(e.target.value); setJsonError(''); }}
                 rows={10}
-                placeholder={'[{"no":1,"name":"Rahul Sharma","role":"Software Engineer","phone":"917439717970"}]'}
+                placeholder={`[
+  {
+    "name": "Rahul Sharma",
+    "role": "Software Engineer",
+    "no": "917439717970",
+    "email": "rahul@example.com",
+    "company": "Acme Corp",
+    "experience": 5
+  }
+]`}
                 className="w-full rounded-xl bg-slate-950 border border-slate-700 text-slate-200 font-mono text-xs px-4 py-3 focus:outline-none focus:ring-2 focus:ring-brand/50 resize-none" />
               {jsonError && <p className="mt-2 text-xs text-red-400 font-semibold">{jsonError}</p>}
               <button onClick={applyJson} className="mt-3 btn-neon rounded-xl px-5 py-2 text-sm font-bold text-white">Apply JSON</button>

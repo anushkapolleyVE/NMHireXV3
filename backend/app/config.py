@@ -68,8 +68,9 @@ class Settings(BaseSettings):
     OUTREACH_TOP_N: int = 50
 
     # ---------------------------------------------------------
-    # WHATSAPP / NMVE
+    # WHATSAPP / NMVE (KEY 1: SEND WHATSAPP MESSAGES ONLY)
     # ---------------------------------------------------------
+    WHATSAPP_MESSAGE_API_KEY: str = ""
     WHATSAPP_API_KEY: str = ""
 
     WHATSAPP_BASE_URL: str = (
@@ -110,11 +111,12 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = ""
 
     # ---------------------------------------------------------
-    # WHATSAPP INTEGRATION GATEWAY
+    # WHATSAPP INTEGRATION GATEWAY (KEY 2: GENERATE TEST URL FROM /addcandidates)
     # ---------------------------------------------------------
     # Gateway base URL without trailing slash (e.g. https://gateway.example.com)
     NMHIREX_GATEWAY_URL: str = ""
-    # Bearer token in format wa_live_<keyId>_<secret>
+    # Bearer token in format wa_live_<keyId>_<secret> (Used strictly for Gateway & /addcandidates)
+    NMHIREX_GATEWAY_API_KEY: str = ""
     NMHIREX_API_KEY: str = ""
     NMHIREX_GATEWAY_TIMEOUT_SECONDS: int = 25
     # Default requisition ID if not provided by candidate or job (e.g. 506)

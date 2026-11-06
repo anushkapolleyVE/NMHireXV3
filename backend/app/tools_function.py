@@ -1518,7 +1518,12 @@ def _whatsapp_headers() -> dict:
         "Accept": "application/json",
     }
 
-    api_key = getattr(settings, "WHATSAPP_API_KEY", "")
+    api_key = (
+        getattr(settings, "WHATSAPP_MESSAGE_API_KEY", "")
+        or getattr(settings, "WHATSAPP_API_KEY", "")
+        or os.getenv("WHATSAPP_MESSAGE_API_KEY", "")
+        or os.getenv("WHATSAPP_API_KEY", "")
+    )
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
         headers["api-key"] = api_key
@@ -1577,15 +1582,16 @@ def _send_whatsapp_payload(
     else:
         url = base_url
 
-    api_key = getattr(
-        settings,
-        "WHATSAPP_API_KEY",
-        "",
+    api_key = (
+        getattr(settings, "WHATSAPP_MESSAGE_API_KEY", "")
+        or getattr(settings, "WHATSAPP_API_KEY", "")
+        or os.getenv("WHATSAPP_MESSAGE_API_KEY", "")
+        or os.getenv("WHATSAPP_API_KEY", "")
     )
 
     if not api_key:
         print(
-            "WHATSAPP_API_KEY is not configured."
+            "WHATSAPP_MESSAGE_API_KEY (or WHATSAPP_API_KEY) is not configured for sending messages."
         )
         return False, None, None
 
@@ -3275,6 +3281,13 @@ def send_naukri_outreach_array(
         email = str(item.get("email") or "").strip()
         company = str(item.get("current_company") or item.get("company") or "").strip()
         role = str(item.get("job_role") or item.get("role") or (job.title if job else "the position")).strip()
+        raw_exp = item.get("experience") or item.get("total_experience_years")
+        parsed_exp = None
+        if raw_exp is not None and str(raw_exp).strip() != "":
+            try:
+                parsed_exp = Decimal(str(raw_exp).strip())
+            except Exception:
+                parsed_exp = None
         
         # Phone can be provided as phone, phone_number, mobile, or in the 'no' field
         raw_phone = str(
@@ -3346,8 +3359,9 @@ def send_naukri_outreach_array(
                     name=name,
                     phone=raw_phone,
                     current_role=role,
-                email=email if email else None,
-                current_company=company if company else None,
+                    email=email if email else None,
+                    current_company=company if company else None,
+                    total_experience_years=parsed_exp,
                 )
                 db.add(cand_skipped)
                 db.flush()
@@ -3413,8 +3427,19 @@ def send_naukri_outreach_array(
                 current_role=role,
                 email=email if email else None,
                 current_company=company if company else None,
+                total_experience_years=parsed_exp,
             )
             db.add(candidate)
+            db.flush()
+        else:
+            if email and not candidate.email:
+                candidate.email = email
+            if company and not candidate.current_company:
+                candidate.current_company = company
+            if role and not candidate.current_role:
+                candidate.current_role = role
+            if parsed_exp is not None and candidate.total_experience_years is None:
+                candidate.total_experience_years = parsed_exp
             db.flush()
 
         # ----------------------------------------------------------------

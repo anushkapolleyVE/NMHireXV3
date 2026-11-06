@@ -358,17 +358,26 @@ def add_candidate(
             f"Invalid interview_time '{interview_time}': must be in HH:mm 24-hour format (e.g. '11:00')."
         )
 
-    # 7. Requisition & Request ID
-    req_id = (
-        candidate_input.get("requisition_id")
-        or candidate_input.get("request_id")
-        or getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
-    )
-    # Ensure numeric if convertible
-    try:
-        req_id_val = int(str(req_id).strip())
-    except (ValueError, TypeError):
-        req_id_val = req_id
+    # 7. Request ID & Requisition ID
+    req_id_input = candidate_input.get("request_id")
+    if req_id_input is not None and str(req_id_input).strip():
+        req_str = str(req_id_input).strip()
+        try:
+            request_id_val = int(req_str)
+        except (ValueError, TypeError):
+            request_id_val = req_str
+    else:
+        request_id_val = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
+
+    requisition_id_input = candidate_input.get("requisition_id")
+    if requisition_id_input is not None and str(requisition_id_input).strip():
+        req_str = str(requisition_id_input).strip()
+        try:
+            requisition_id_val = int(req_str)
+        except (ValueError, TypeError):
+            requisition_id_val = req_str
+    else:
+        requisition_id_val = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
 
     # 8. Build full payload adhering strictly to the user specification
     payload: dict[str, Any] = {
@@ -397,8 +406,8 @@ def add_candidate(
         "technical_round": 1,         # Fixed
         "one2one_round": 1,           # Fixed
         "cultural_fit": str(candidate_input.get("cultural_fit") or ""),
-        "request_id": req_id_val,
-        "requisition_id": req_id_val,
+        "request_id": request_id_val,
+        "requisition_id": requisition_id_val,
         "comm_skill_rating": 4,       # Fixed
         "cultural_fit_rating": 4,     # Fixed
         "operation": "addcandidate",  # Fixed

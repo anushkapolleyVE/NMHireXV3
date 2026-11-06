@@ -15,19 +15,28 @@ The WhatsApp automated messaging (candidate outreach, intent recognition, and da
 
 ---
 
-### Environment Setup
+### Environment Setup (Dual API Key Architecture)
 
 Add the following variables to your `backend/.env` file:
 
 ```env
-# WhatsApp Integration Gateway
-NMHIREX_GATEWAY_URL=https://whatsapp-gateway.example.com
-NMHIREX_API_KEY=wa_live_<keyId>_<secret>
+# -------------------------------------------------------------
+# KEY 1: WHATSAPP MESSAGING (PERMISSION: SEND MESSAGES ONLY)
+# -------------------------------------------------------------
+WHATSAPP_MESSAGE_API_KEY=wa_live_<messagingKeyId>_<secret>
+WHATSAPP_API_KEY=wa_live_<messagingKeyId>_<secret>
+
+# -------------------------------------------------------------
+# KEY 2: WHATSAPP INTEGRATION GATEWAY (PERMISSION: /addcandidates TEST URL GENERATION)
+# -------------------------------------------------------------
+NMHIREX_GATEWAY_URL=https://nmve.io/whatsapp
+NMHIREX_GATEWAY_API_KEY=wa_live_<gatewayKeyId>_<secret>
+NMHIREX_API_KEY=wa_live_<gatewayKeyId>_<secret>
 NMHIREX_GATEWAY_TIMEOUT_SECONDS=25
 NMHIREX_DEFAULT_REQUISITION_ID=506
 ```
 
-> **Security Note:** The API key is stored and used **server-side only**. It is never exposed in frontend code, browser network bundles, or server logs.
+> **Security Note:** Both API keys are stored and used **server-side only**. They are never exposed in frontend code, browser network bundles, or server logs. Key 1 is strictly isolated for outbound messaging, and Key 2 is strictly isolated for `/addcandidates` URL generation and gateway read queries.
 
 ---
 

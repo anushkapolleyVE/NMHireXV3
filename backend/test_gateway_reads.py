@@ -37,8 +37,8 @@ def run_tests():
     start_date = "2026-11-01"
     end_date = "2026-11-05"
 
-    gateway_url = os.getenv("NMHIREX_GATEWAY_URL", "")
-    api_key = os.getenv("NMHIREX_API_KEY", "")
+    gateway_url = os.getenv("NMHIREX_GATEWAY_URL", "") or "https://nmve.io/whatsapp"
+    api_key = os.getenv("NMHIREX_GATEWAY_API_KEY") or os.getenv("NMHIREX_API_KEY", "")
 
     print("=" * 65)
     print(" WhatsApp Integration Gateway - Read APIs Test")
@@ -48,9 +48,9 @@ def run_tests():
     print(f"Date Range:  {start_date} to {end_date}")
     print("-" * 65)
 
-    if not gateway_url or not api_key:
-        print("[!] ERROR: NMHIREX_GATEWAY_URL or NMHIREX_API_KEY is not set.")
-        print("    Please set them in backend/.env before running this test script.")
+    if not api_key:
+        print("[!] ERROR: NMHIREX_GATEWAY_API_KEY (or NMHIREX_API_KEY) is not set.")
+        print("    Please set it in backend/.env before running this test script.")
         print("=" * 65)
         return
 

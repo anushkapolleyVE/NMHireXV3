@@ -740,7 +740,20 @@ def api_scheduling_confirm(
             cand_email = cand.email or f"{cand_phone or 'candidate'}@nmhirex.com"
             cand_company = cand.current_company or ""
             cand_role = cand.current_role or (job.title if job else "")
-            req_id = getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506)
+            
+            # The candidates table id as requisition_id
+            requisition_id = str(cand.id)
+            # When interview scheduled, the record stored in database as request_id
+            request_id = str(jc.id)
+
+            # Store request_id and requisition_id for this candidate in the database
+            jc.request_id = request_id
+            jc.requisition_id = requisition_id
+            db.commit()
+
+            cand_exp_val = ""
+            if cand.total_experience_years is not None:
+                cand_exp_val = str(cand.total_experience_years).rstrip("0").rstrip(".")
 
             gw_payload = {
                 "user_name": cand_name,
@@ -749,17 +762,21 @@ def api_scheduling_confirm(
                 "current_company": cand_company,
                 "interview_date": dt.strftime("%Y-%m-%d"),
                 "interview_time": dt.strftime("%H:%M"),
+                "experience": cand_exp_val,
                 "technical_round": 1,
                 "one2one_round": 1,
                 "comm_skill_rating": 4,
                 "cultural_fit_rating": 4,
                 "operation": "addcandidate",
-                "request_id": req_id,
-                "requisition_id": req_id,
+                "request_id": request_id,
+                "requisition_id": requisition_id,
                 "job_role": cand_role,
             }
             gw_res = add_candidate(gw_payload)
             meeting_url = gw_res.get("registrationUrl")
+            if meeting_url:
+                jc.registration_url = meeting_url
+                db.commit()
         except Exception as gw_err:
             import logging
             logging.getLogger("nmhirex").warning("Gateway add_candidate failed during slot confirmation: %s", gw_err)
@@ -1160,10 +1177,102 @@ def api_get_gateway_joined_interviews(
 
 @router.post("/gateway/add-candidate")
 @router.post("/gateway/candidates")
-def api_post_gateway_add_candidate(candidate_input: dict = Body(...)):
+def api_post_gateway_add_candidate(
+    candidate_input: dict = Body(...),
+    db: Session = Depends(get_db),
+):
     """API 3: Create candidate and schedule interview on WhatsApp Gateway (WRITE)."""
     try:
+        from .models import Candidate, JobCandidate, Job, User
+        from .tools_function import _clean_whatsapp_phone
+        from sqlalchemy import select
+
+        c_name = str(candidate_input.get("user_name") or candidate_input.get("name") or "").strip()
+        c_phone = str(candidate_input.get("contact_no") or candidate_input.get("phone") or candidate_input.get("no") or "").strip()
+        c_email = str(candidate_input.get("email") or "").strip()
+        c_company = str(candidate_input.get("current_company") or candidate_input.get("company") or "").strip()
+        c_role = str(candidate_input.get("job_role") or candidate_input.get("role") or "").strip()
+        c_date = str(candidate_input.get("interview_date") or "").strip()
+        c_time = str(candidate_input.get("interview_time") or "").strip()
+
+        cand = None
+        clean_phone = _clean_whatsapp_phone(c_phone) if c_phone else ""
+        if clean_phone:
+            cand = db.scalar(select(Candidate).where(Candidate.phone == clean_phone))
+        if not cand and c_email:
+            cand = db.scalar(select(Candidate).where(Candidate.email == c_email))
+
+        if not cand and c_name:
+            cand = Candidate(
+                name=c_name,
+                phone=clean_phone or c_phone,
+                email=c_email if c_email else None,
+                current_company=c_company if c_company else None,
+                current_role=c_role if c_role else None,
+            )
+            db.add(cand)
+            db.flush()
+
+        # Requisition ID: use Candidate table id
+        if cand and not candidate_input.get("requisition_id"):
+            candidate_input["requisition_id"] = str(cand.id)
+
+        # Job & JobCandidate for interview schedule
+        jc = None
+        if cand:
+            job = db.scalar(select(Job).where(Job.title == (c_role or "General Position")).limit(1))
+            if not job:
+                user = db.scalar(select(User).limit(1))
+                job = Job(
+                    title=c_role or "General Position",
+                    status="ACTIVE",
+                    created_by=user.id if user else None,
+                )
+                db.add(job)
+                db.flush()
+
+            jc = db.scalar(
+                select(JobCandidate).where(
+                    JobCandidate.job_id == job.id,
+                    JobCandidate.candidate_id == cand.id,
+                )
+            )
+            if not jc:
+                jc = JobCandidate(
+                    job_id=job.id,
+                    candidate_id=cand.id,
+                    is_shortlisted=True,
+                    recruitment_status="INTERVIEW_SCHEDULED",
+                )
+                db.add(jc)
+                db.flush()
+
+            if c_date and c_time:
+                try:
+                    dt = parse_interview_datetime(c_date, c_time)
+                    jc.interview_scheduled_at = dt
+                    jc.recruitment_status = "INTERVIEW_SCHEDULED"
+                except Exception:
+                    pass
+
+            db.commit()
+
+            # Request ID: interview scheduled record stored in database
+            if not candidate_input.get("request_id"):
+                candidate_input["request_id"] = str(jc.id)
+
+            jc.request_id = str(candidate_input["request_id"])
+            jc.requisition_id = str(candidate_input.get("requisition_id") or cand.id)
+            db.commit()
+
         res = add_candidate(candidate_input)
+
+        reg_url = res.get("registrationUrl")
+        if jc and reg_url:
+            jc.interview_link = reg_url
+            jc.registration_url = reg_url
+            db.commit()
+
         return {
             "success": True,
             "message": "Candidate created and interview scheduled successfully.",
@@ -1171,4 +1280,5 @@ def api_post_gateway_add_candidate(candidate_input: dict = Body(...)):
             "data": res,
         }
     except Exception as exc:
+        db.rollback()
         _handle_gateway_exception(exc)
