@@ -55,6 +55,8 @@ from .tools_function import (
     update_candidate_status,
     bulk_update_candidate_status,
     get_all_candidates,
+    get_pending_outreach_candidates,
+    send_pending_outreach_candidates,
 )
 
 router = APIRouter(prefix="/api")
@@ -942,10 +944,12 @@ async def api_send_outreach_endpoint(
     candidates_list = []
     job_id = None
     company_name = None
+    automate = "yes"
 
     if isinstance(body, list):
         candidates_list = body
     elif isinstance(body, dict):
+        automate = body.get("automate", "yes")
         if "candidates" in body and isinstance(body["candidates"], list):
             candidates_list = body["candidates"]
             job_id = body.get("job_id")
@@ -982,10 +986,44 @@ async def api_send_outreach_endpoint(
             candidates=candidates_list,
             company_name=company_name,
             user_id=user.id if user else None,
+            automate=automate,
         )
         return {"success": True, "data": result}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class SendPendingOutreachRequest(BaseModel):
+    job_candidate_ids: list[UUID]
+
+
+@router.get("/outreach/pending")
+def api_get_pending_outreach(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get candidates in the manual outreach queue (recruitment_status='PENDING_OUTREACH')
+    who have not had a WhatsApp outreach message sent yet.
+    """
+    return get_pending_outreach_candidates(db, user_id=user.id if user else None)
+
+
+@router.post("/outreach/send-pending")
+def api_send_pending_outreach(
+    req: SendPendingOutreachRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send WhatsApp outreach messages to selected candidates from the pending queue.
+    """
+    try:
+        res = send_pending_outreach_candidates(db, req.job_candidate_ids)
+        return {"success": True, "data": res}
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1183,6 +1221,9 @@ def api_post_gateway_add_candidate(
 ):
     """API 3: Create candidate and schedule interview on WhatsApp Gateway (WRITE)."""
     try:
+        # Strictly ensure 'automate' key is never forwarded to add-candidate gateway API
+        candidate_input.pop("automate", None)
+
         from .models import Candidate, JobCandidate, Job, User
         from .tools_function import _clean_whatsapp_phone
         from sqlalchemy import select

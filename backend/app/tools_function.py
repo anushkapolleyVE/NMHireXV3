@@ -3236,12 +3236,23 @@ def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
 # records every message in candidate_contacts.
 # ============================================================
 
+def _is_automate_yes(val) -> bool:
+    """Helper to interpret 'automate' flag (defaulting to True/yes)."""
+    if val is None:
+        return True
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    return s in ("yes", "y", "true", "1", "auto")
+
+
 def send_naukri_outreach_array(
     db: Session,
     job_id: UUID | None = None,
     candidates: list[dict] | None = None,
     company_name: str | None = None,
     user_id: UUID | None = None,
+    automate: str | bool | None = "yes",
 ) -> dict:
     """
     Send the candidate_shortlisted_outreach WhatsApp template to an array of
@@ -3276,6 +3287,7 @@ def send_naukri_outreach_array(
     candidate_list = candidates or []
     results = []
     sent_count = 0
+    queued_count = 0
     failed_count = 0
     skipped_count = 0
 
@@ -3482,6 +3494,27 @@ def send_naukri_outreach_array(
             continue
 
         # ----------------------------------------------------------------
+        # Check automation setting ('automate': 'yes' | 'no')
+        # If 'no': Candidate is stored in DB for manual review & outreach
+        # on the Pending Outreach page. Do NOT send WhatsApp message now.
+        # ----------------------------------------------------------------
+        item_automate = item.get("automate", automate)
+        if not _is_automate_yes(item_automate):
+            job_candidate.recruitment_status = "PENDING_OUTREACH"
+            db.commit()
+
+            results.append({
+                "no": serial_no,
+                "name": name,
+                "phone": clean_phone,
+                "status": "QUEUED_MANUAL",
+                "candidate_id": str(candidate.id),
+                "job_candidate_id": str(job_candidate.id),
+            })
+            queued_count += 1
+            continue
+
+        # ----------------------------------------------------------------
         # Determine actual destination phone (test mode override)
         # ----------------------------------------------------------------
         dest_phone = clean_phone
@@ -3575,7 +3608,215 @@ def send_naukri_outreach_array(
         "job_id": str(job_id) if job_id else None,
         "total": len(candidate_list),
         "sent": sent_count,
+        "queued": queued_count,
         "skipped": skipped_count,
         "failed": failed_count,
+        "results": results,
+    }
+
+
+def get_pending_outreach_candidates(
+    db: Session,
+    user_id: UUID | None = None,
+) -> list[dict]:
+    """
+    Return candidates queued for manual outreach (recruitment_status='PENDING_OUTREACH')
+    who have not received an outbound WhatsApp outreach message yet.
+    """
+    query = (
+        select(Candidate, JobCandidate, Job)
+        .join(JobCandidate, JobCandidate.candidate_id == Candidate.id)
+        .outerjoin(Job, Job.id == JobCandidate.job_id)
+        .where(JobCandidate.recruitment_status == "PENDING_OUTREACH")
+        .order_by(JobCandidate.created_at.desc(), Candidate.created_at.desc())
+    )
+
+    rows = db.execute(query).all()
+    results = []
+    seen = set()
+
+    for candidate, jc, job in rows:
+        if jc.id in seen:
+            continue
+        seen.add(jc.id)
+
+        # Confirm no outbound contact has been made
+        has_outbound = _candidate_has_contact_history(db, jc.id)
+        if has_outbound:
+            continue
+
+        results.append({
+            "job_candidate_id": str(jc.id),
+            "candidate_id": str(candidate.id),
+            "job_id": str(job.id) if job else None,
+            "name": candidate.name or "Unnamed Candidate",
+            "phone": candidate.phone or "",
+            "email": candidate.email or "",
+            "company": candidate.current_company or "",
+            "role": candidate.current_role or (job.title if job else "Software Engineer"),
+            "experience": float(candidate.total_experience_years) if candidate.total_experience_years is not None else None,
+            "requisition_id": jc.requisition_id or (str(job.requisition_id) if job and job.requisition_id else None),
+            "status": jc.recruitment_status,
+            "created_at": jc.created_at.isoformat() if jc.created_at else None,
+        })
+
+    return results
+
+
+def send_pending_outreach_candidates(
+    db: Session,
+    job_candidate_ids: list[UUID],
+) -> dict:
+    """
+    Send WhatsApp outreach messages (Key 1) to selected pending candidates.
+    After sending, sets recruitment_status to 'CONTACTED', logs CandidateContact,
+    and returns a summary. The subsequent flow (WhatsApp reply -> slot booking ->
+    gateway add_candidate with Key 2 -> confirmation WhatsApp with Key 1) continues
+    identically.
+    """
+    callback_url = getattr(
+        settings,
+        "WHATSAPP_CALLBACK_URL",
+        "https://nmhirex.onrender.com/api/webhooks/whatsapp",
+    )
+    template_name = getattr(settings, "WHATSAPP_TEMPLATE_NAME", "candidate_shortlisted_outreach")
+    template_language = getattr(settings, "WHATSAPP_TEMPLATE_LANGUAGE", "en")
+    default_company = getattr(settings, "WHATSAPP_COMPANY_NAME", "the company")
+
+    results = []
+    sent_count = 0
+    failed_count = 0
+    skipped_count = 0
+
+    for jc_id in job_candidate_ids:
+        jc = db.get(JobCandidate, jc_id)
+        if not jc:
+            results.append({
+                "job_candidate_id": str(jc_id),
+                "status": "NOT_FOUND",
+                "error": "Job candidate record not found",
+            })
+            failed_count += 1
+            continue
+
+        candidate = db.get(Candidate, jc.candidate_id)
+        if not candidate:
+            results.append({
+                "job_candidate_id": str(jc_id),
+                "status": "NOT_FOUND",
+                "error": "Candidate record not found",
+            })
+            failed_count += 1
+            continue
+
+        job = db.get(Job, jc.job_id) if jc.job_id else None
+
+        # Check if already contacted
+        if _candidate_has_contact_history(db, jc.id):
+            results.append({
+                "job_candidate_id": str(jc.id),
+                "name": candidate.name,
+                "phone": candidate.phone,
+                "status": "SKIPPED_ALREADY_CONTACTED",
+            })
+            skipped_count += 1
+            continue
+
+        clean_phone = _clean_whatsapp_phone(candidate.phone)
+        if not clean_phone:
+            results.append({
+                "job_candidate_id": str(jc.id),
+                "name": candidate.name,
+                "phone": candidate.phone,
+                "status": "INVALID_PHONE",
+            })
+            failed_count += 1
+            continue
+
+        # Test mode override
+        dest_phone = clean_phone
+        if getattr(settings, "WHATSAPP_TEST_MODE", False):
+            test_number = getattr(settings, "WHATSAPP_TEST_NUMBER", "")
+            dest_phone = _clean_whatsapp_phone(test_number) or ""
+            if not dest_phone:
+                results.append({
+                    "job_candidate_id": str(jc.id),
+                    "name": candidate.name,
+                    "phone": clean_phone,
+                    "status": "FAILED_TEST_MODE_NO_NUMBER",
+                })
+                failed_count += 1
+                continue
+
+        name = candidate.name or "Candidate"
+        role = candidate.current_role or (job.title if job else "the position")
+        company = candidate.current_company or default_company
+
+        reference_id = f"NMHireX-{str(jc.id)}"
+        payload = {
+            "to": dest_phone,
+            "templateName": template_name,
+            "bodyParams": [name, role, company, company],
+            "languageCode": template_language,
+            "referenceId": reference_id,
+            "callbackUrl": callback_url,
+        }
+
+        print(f"[PendingOutreach] Sending WhatsApp to {dest_phone} for candidate '{name}' ...")
+        success, response_body, provider_message_id = _send_whatsapp_payload(payload)
+
+        if not success:
+            failed_contact = CandidateContact(
+                job_candidate_id=jc.id,
+                channel="WHATSAPP",
+                message_type="OUTBOUND",
+                message=f"Failed to send template {template_name}: {response_body}",
+                provider="NMVE",
+                status="FAILED",
+                sent_at=datetime.utcnow(),
+            )
+            db.add(failed_contact)
+            jc.recruitment_status = "FAILED"
+            db.commit()
+
+            results.append({
+                "job_candidate_id": str(jc.id),
+                "name": name,
+                "phone": clean_phone,
+                "status": "FAILED_SEND",
+                "error": str(response_body),
+            })
+            failed_count += 1
+            continue
+
+        # Success: persist outbound contact
+        contact = CandidateContact(
+            job_candidate_id=jc.id,
+            channel="WHATSAPP",
+            message_type="OUTBOUND",
+            message=f"Shortlisting template sent: {template_name}",
+            provider="NMVE",
+            external_message_id=provider_message_id,
+            status="DELIVERED",
+            sent_at=datetime.utcnow(),
+            delivered_at=datetime.utcnow(),
+        )
+        db.add(contact)
+        jc.recruitment_status = "CONTACTED"
+        db.commit()
+
+        results.append({
+            "job_candidate_id": str(jc.id),
+            "name": name,
+            "phone": clean_phone,
+            "status": "SENT",
+        })
+        sent_count += 1
+
+    return {
+        "total": len(job_candidate_ids),
+        "sent": sent_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
         "results": results,
     }

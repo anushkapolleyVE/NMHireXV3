@@ -305,6 +305,9 @@ def add_candidate(
     if not isinstance(candidate_input, dict):
         raise GatewayValidationError("Candidate input must be a valid JSON dictionary.")
 
+    # Strictly strip 'automate' flag so it never enters the addcandidate API payload
+    candidate_input.pop("automate", None)
+
     # 1. User Name
     user_name = str(
         candidate_input.get("user_name")

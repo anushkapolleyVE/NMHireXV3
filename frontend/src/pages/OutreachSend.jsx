@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import Header from '../components/Header';
 import { getUserJobs, sendNaukriOutreach } from '../utils/api';
 
 const STATUS_META = {
-  SENT:                    { label: 'Sent',               color: 'text-emerald-400', bg: 'bg-emerald-500/10 ring-emerald-500/30' },
-  SKIPPED_ALREADY_CONTACTED: { label: 'Already contacted', color: 'text-yellow-400',  bg: 'bg-yellow-500/10 ring-yellow-500/30' },
-  SKIPPED_INVALID_PHONE:   { label: 'Invalid phone',      color: 'text-orange-400',  bg: 'bg-orange-500/10 ring-orange-500/30' },
-  SKIPPED_MISSING_FIELDS:  { label: 'Missing fields',     color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
-  FAILED_SEND:             { label: 'Send failed',        color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
-  FAILED_TEST_MODE_NO_NUMBER: { label: 'No test number',  color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
+  SENT:                      { label: 'Sent',                 color: 'text-emerald-400', bg: 'bg-emerald-500/10 ring-emerald-500/30' },
+  QUEUED_MANUAL:             { label: 'Queued (Manual)',     color: 'text-brand',       bg: 'bg-brand/10 ring-brand/30' },
+  PENDING_OUTREACH:          { label: 'Pending Outreach',    color: 'text-brand',       bg: 'bg-brand/10 ring-brand/30' },
+  SKIPPED_ALREADY_CONTACTED: { label: 'Already contacted',   color: 'text-yellow-400',  bg: 'bg-yellow-500/10 ring-yellow-500/30' },
+  SKIPPED_INVALID_PHONE:     { label: 'Invalid phone',        color: 'text-orange-400',  bg: 'bg-orange-500/10 ring-orange-500/30' },
+  SKIPPED_MISSING_FIELDS:    { label: 'Missing fields',       color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
+  FAILED_SEND:               { label: 'Send failed',          color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
+  FAILED_TEST_MODE_NO_NUMBER:{ label: 'No test number',       color: 'text-red-400',     bg: 'bg-red-500/10 ring-red-500/30' },
 };
 
 const EMPTY_ROW = { no: '', name: '', role: '', phone: '', email: '', company: '', experience: '' };
@@ -17,6 +20,7 @@ export default function OutreachSend() {
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [automate, setAutomate] = useState('yes');
   const [rows, setRows] = useState([{ ...EMPTY_ROW, no: 1 }]);
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState('');
@@ -51,6 +55,13 @@ export default function OutreachSend() {
     setJsonError('');
     try {
       const parsed = JSON.parse(jsonText);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.automate !== undefined) {
+          setAutomate(String(parsed.automate).toLowerCase() === 'no' ? 'no' : 'yes');
+        } else if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].automate !== undefined) {
+          setAutomate(String(parsed[0].automate).toLowerCase() === 'no' ? 'no' : 'yes');
+        }
+      }
       const list = Array.isArray(parsed) ? parsed : (parsed.candidates || [parsed]);
       const mapped = list.map((item, idx) => {
         const phoneVal = item.phone || item.contact_no || item.mobile || (typeof item.no === 'string' && item.no.length >= 6 ? item.no : (String(item.no || '').length >= 6 ? String(item.no) : ''));
@@ -81,6 +92,7 @@ export default function OutreachSend() {
         name: r.name.trim(),
         role: r.role.trim() || 'Software Engineer',
         phone: (r.phone.trim() || String(r.no)).trim(),
+        automate: automate,
       };
       if (r.email && r.email.trim()) cand.email = r.email.trim();
       if (r.company && r.company.trim()) cand.company = r.company.trim();
@@ -101,6 +113,7 @@ export default function OutreachSend() {
         jobId: selectedJobId || null,
         candidates,
         companyName: companyName.trim() || null,
+        automate,
       });
       setResult(res.data ?? res);
     } catch (err) {
@@ -139,7 +152,7 @@ export default function OutreachSend() {
           </p>
         </div>
 
-        <div className="glass-dark rounded-2xl p-6 mb-6 border border-slate-800 animate-slide-up opacity-0-init animate-delay-200 grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div className="glass-dark rounded-2xl p-6 mb-6 border border-slate-800 animate-slide-up opacity-0-init animate-delay-200 grid grid-cols-1 md:grid-cols-3 gap-5">
           <div>
             <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">
               Job / Requisition <span className="normal-case text-slate-600 font-normal">(Optional)</span>
@@ -158,6 +171,40 @@ export default function OutreachSend() {
             <input id="outreach-company-name" type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
               placeholder="e.g. Acme Corp"
               className="w-full rounded-xl bg-slate-900 border border-slate-700 text-white px-4 py-2.5 text-sm placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand/50" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">
+              Automate Outreach <span className="normal-case text-slate-600 font-normal">(automate)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAutomate('yes')}
+                className={`flex-1 rounded-xl py-2.5 px-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  automate === 'yes'
+                    ? 'bg-brand/20 text-brand ring-1 ring-brand/40 shadow-sm'
+                    : 'bg-slate-900 border border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span className={`size-2 rounded-full ${automate === 'yes' ? 'bg-brand shadow-[0_0_8px_rgba(59,130,246,0.8)]' : 'bg-slate-600'}`} />
+                Yes (Auto-send)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAutomate('no')}
+                className={`flex-1 rounded-xl py-2.5 px-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  automate === 'no'
+                    ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40 shadow-sm'
+                    : 'bg-slate-900 border border-slate-700 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span className={`size-2 rounded-full ${automate === 'no' ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)]' : 'bg-slate-600'}`} />
+                No (Manual queue)
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {automate === 'yes' ? 'Sends WhatsApp template immediately.' : 'Saves candidate to Pending Outreach page for manual send.'}
+            </p>
           </div>
         </div>
 
@@ -261,7 +308,8 @@ export default function OutreachSend() {
     "no": "917439717970",
     "email": "rahul@example.com",
     "company": "Acme Corp",
-    "experience": 5
+    "experience": 5,
+    "automate": "no"
   }
 ]`}
                 className="w-full rounded-xl bg-slate-950 border border-slate-700 text-slate-200 font-mono text-xs px-4 py-3 focus:outline-none focus:ring-2 focus:ring-brand/50 resize-none" />
@@ -277,14 +325,25 @@ export default function OutreachSend() {
 
         <div className="flex justify-end mb-10">
           <button id="outreach-send-btn" onClick={handleSend} disabled={sending}
-            className="btn-neon rounded-2xl px-8 py-3.5 text-base font-bold text-white shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3">
+            className={`rounded-2xl px-8 py-3.5 text-base font-bold text-white shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 transition-all ${
+              automate === 'no'
+                ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/30'
+                : 'btn-neon'
+            }`}>
             {sending ? (
               <>
                 <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                 </svg>
-                Sending…
+                {automate === 'no' ? 'Saving to Queue…' : 'Sending…'}
+              </>
+            ) : automate === 'no' ? (
+              <>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                Save to Pending Outreach Queue
               </>
             ) : (
               <>
@@ -299,9 +358,34 @@ export default function OutreachSend() {
 
         {result && (
           <div className="animate-slide-up opacity-0-init animate-delay-100">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            {result.queued > 0 && (
+              <div className="mb-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-xl bg-amber-500/20 ring-1 ring-amber-500/40 flex items-center justify-center shrink-0">
+                    <svg className="size-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-amber-300">Candidates Queued for Manual Review</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {result.queued} candidate{result.queued > 1 ? 's' : ''} saved in Pending Outreach. You can review and trigger WhatsApp messages individually or in bulk.
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  to="/outreach/pending"
+                  className="rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 px-4 py-2 text-xs font-bold transition-all shrink-0 flex items-center gap-2 shadow-md shadow-amber-500/20"
+                >
+                  Open Pending Outreach →
+                </Link>
+              </div>
+            )}
+
+            <div className={`grid gap-4 mb-6 ${result.queued > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
               {[
                 { label: 'Total',   value: result.total,   color: 'text-white' },
+                ...(result.queued > 0 ? [{ label: 'Queued', value: result.queued, color: 'text-amber-400' }] : []),
                 { label: 'Sent',    value: result.sent,    color: 'text-emerald-400' },
                 { label: 'Skipped', value: result.skipped, color: 'text-yellow-400' },
                 { label: 'Failed',  value: result.failed,  color: 'text-red-400' },

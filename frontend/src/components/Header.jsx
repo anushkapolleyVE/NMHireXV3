@@ -24,6 +24,7 @@ export default function Header({ showNav = true }) {
     ? [
         { name: 'Dashboard', path: '/dashboard' },
         { name: 'Send Outreach', path: '/outreach/send' },
+        { name: 'Pending Outreach', path: '/outreach/pending' },
         { name: 'Outreach Responses', path: '/outreach' },
         { name: 'Candidates', path: '/candidates' },
         { name: 'WhatsApp Gateway', path: '/whatsapp-gateway' },
@@ -32,6 +33,7 @@ export default function Header({ showNav = true }) {
     : [
         { name: 'Dashboard', path: '/dashboard' },
         { name: 'Send Outreach', path: '/outreach/send' },
+        { name: 'Pending Outreach', path: '/outreach/pending' },
         { name: 'Outreach Responses', path: '/outreach' },
         { name: 'Candidates', path: '/candidates' },
         { name: 'WhatsApp Gateway', path: '/whatsapp-gateway' },

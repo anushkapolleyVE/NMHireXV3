@@ -7,6 +7,7 @@ import Candidates from './pages/Candidates';
 import JobDescriptions from './pages/JobDescriptions';
 import Outreach from './pages/Outreach';
 import OutreachSend from './pages/OutreachSend';
+import PendingOutreach from './pages/PendingOutreach';
 import Register from './pages/Register';
 import ScheduleInterview from './pages/ScheduleInterview';
 import TopCandidates from './pages/TopCandidates';
@@ -27,6 +28,7 @@ function App() {
       <Route path="/job-descriptions" element={<Navigate to="/dashboard" replace />} />
       <Route path="/outreach" element={<Outreach />} />
       <Route path="/outreach/send" element={<OutreachSend />} />
+      <Route path="/outreach/pending" element={<PendingOutreach />} />
       <Route path="/schedule/:candidateId" element={<ScheduleInterview />} />
       <Route path="/reschedule/:token" element={<Reschedule />} />
       <Route path="/requisitions/:vereq/matches" element={<TopCandidates />} />

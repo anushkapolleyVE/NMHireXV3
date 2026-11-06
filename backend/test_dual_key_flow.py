@@ -27,7 +27,53 @@ os.environ["NMHIREX_GATEWAY_API_KEY"] = "wa_live_key2_addcandidates_only"
 from app.config import settings
 from app.gateway_client import WhatsAppGatewayClient
 from app.gateway_service import add_candidate
-from app.tools_function import _whatsapp_headers
+from app.tools_function import _whatsapp_headers, _is_automate_yes
+
+
+def test_automate_exclusion_and_flag():
+    print("\n" + "=" * 60)
+    print(" TEST 3: 'automate' Key Safety and Flag Parsing")
+    print("=" * 60)
+
+    # 1. Flag parsing
+    assert _is_automate_yes("yes") is True
+    assert _is_automate_yes("Yes") is True
+    assert _is_automate_yes("true") is True
+    assert _is_automate_yes(True) is True
+    assert _is_automate_yes(None) is True
+    assert _is_automate_yes("no") is False
+    assert _is_automate_yes("No") is False
+    assert _is_automate_yes("false") is False
+    assert _is_automate_yes(False) is False
+    assert _is_automate_yes("0") is False
+    print("  ✓ 'automate' flag parser accurately handles 'yes' / 'no' variants.")
+
+    # 2. Verify 'automate' is NEVER passed into /add-candidate payload
+    mock_client = MagicMock()
+    mock_client.post.return_value = {
+        "statusCode": 200,
+        "message": "Candidate added",
+        "registrationUrl": "https://interview.teckvalley.com/",
+    }
+
+    test_input = {
+        "user_name": "Test User",
+        "email": "test@example.com",
+        "contact_no": "919999999999",
+        "interview_date": "2026-11-20",
+        "interview_time": "10:00",
+        "automate": "no",
+        "request_id": "req-123",
+        "requisition_id": 506,
+    }
+
+    add_candidate(test_input, client=mock_client)
+    called_payload = mock_client.post.call_args[1]["payload"]
+
+    assert "automate" not in called_payload, (
+        f"CRITICAL: 'automate' was leaked to /add-candidate payload: {called_payload}"
+    )
+    print("  ✓ Strict schema enforcement: 'automate' is excluded from /add-candidate payload.")
 
 
 def test_key_separation():
@@ -116,6 +162,7 @@ def test_add_candidate_payload_structure():
 if __name__ == "__main__":
     test_key_separation()
     test_add_candidate_payload_structure()
+    test_automate_exclusion_and_flag()
     print("\n" + "=" * 60)
     print(" ALL TESTS PASSED SUCCESSFULLY! ")
     print("=" * 60)

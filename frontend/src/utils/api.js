@@ -221,11 +221,12 @@ export const fetchTopCandidates = async (jobId, vereqNumber) => {
 // NAUKRI-STYLE OUTREACH ARRAY
 // --------------------------------------------------
 
-export const sendNaukriOutreach = async ({ jobId, candidates, companyName }) => {
+export const sendNaukriOutreach = async ({ jobId, candidates, companyName, automate = "yes" }) => {
   const payload = {
     candidates,
     ...(jobId ? { job_id: jobId } : {}),
     ...(companyName ? { company_name: companyName } : {}),
+    automate,
   };
   const res = await fetch(`${API_BASE_URL}/outreach/send-array`, {
     method: "POST",
@@ -237,6 +238,32 @@ export const sendNaukriOutreach = async ({ jobId, candidates, companyName }) => 
   });
   if (!res.ok) {
     throw new Error(await getErrorMessage(res, "Failed to send outreach."));
+  }
+  return res.json();
+};
+
+export const getPendingOutreach = async () => {
+  const res = await fetch(`${API_BASE_URL}/outreach/pending`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await getErrorMessage(res, "Failed to fetch pending candidates."));
+  }
+  return res.json();
+};
+
+export const sendPendingOutreach = async (jobCandidateIds) => {
+  const res = await fetch(`${API_BASE_URL}/outreach/send-pending`, {
+    method: "POST",
+    headers: {
+      ...getHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ job_candidate_ids: jobCandidateIds }),
+  });
+  if (!res.ok) {
+    throw new Error(await getErrorMessage(res, "Failed to send outreach to selected candidates."));
   }
   return res.json();
 };
