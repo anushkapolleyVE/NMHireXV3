@@ -37,21 +37,16 @@ from .config import settings
 from .database import get_db
 from .models import Job, JobCandidate, User
 from .tools_function import (
-    create_job_from_resume_matching_requisition,
     get_admin_job_candidates,
     get_admin_jobs,
     get_job_candidates,
     get_outreach_candidates,
-    get_resume_matching_requisitions,
     get_user_dashboard,
     get_user_job_candidates,
     get_user_jobs,
     handle_whatsapp_webhook,
     schedule_candidate_interview,
     send_naukri_outreach_array,
-    send_top_outreach,
-    sync_resume_matching_candidates,
-    update_interview_status,
     update_candidate_status,
     bulk_update_candidate_status,
     get_all_candidates,
