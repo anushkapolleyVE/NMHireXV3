@@ -1,7 +1,25 @@
-"""All actual NM-HireX business functions.
+"""NM-HireX Core Business Operations & WhatsApp Recruitment Pipeline Engine.
 
-Each function is intentionally small and directly composable; LangGraph is not
-required for this deterministic pipeline.
+This module houses the core deterministic business logic powering the recruitment lifecycle:
+1. Candidate Array Ingestion & Outreach Routing:
+   - `send_naukri_outreach_array`: Ingests candidate batches, upserts entities, and routes either
+     to instant WhatsApp delivery (`automate="yes"`) or to the pending outreach queue (`automate="no"`).
+   - `get_pending_outreach_candidates` & `send_pending_outreach_candidates`: Supports recruiter-driven
+     selective manual outreach for queued candidates on the `/outreach/pending` frontend portal.
+2. WhatsApp Messaging & Transport (Key 1):
+   - `_send_whatsapp_payload`, `_send_whatsapp_to_candidate`, `_send_whatsapp_text_message`: Low-level
+     HTTP dispatch via Key 1 (`WHATSAPP_MESSAGE_API_KEY`) to NMVE WhatsApp gateway with test mode guards.
+   - `_clean_whatsapp_phone`: Strict E.164 normalization for Indian phone numbers (10 digits / 12 digits starting with 91).
+   - `_send_whatsapp_cta_message`: Automated delivery of personalized candidate scheduling links.
+3. Webhook Ingestion & NLP Intent Classification:
+   - `handle_whatsapp_webhook`: Processes inbound candidate replies from NMVE webhooks.
+   - `_classify_whatsapp_response`: Deterministic regex intent parsing ('INTERESTED', 'NOT_INTERESTED', 'UNKNOWN').
+4. Interview Scheduling & Token Management:
+   - `schedule_candidate_interview`: Stores selected time slot, generates single-use `reschedule_token`,
+     sets interview link (redirects to Teckvalley test portal), and dispatches WhatsApp confirmation.
+5. Recruiter Analytics & Queries:
+   - `get_user_dashboard`, `get_outreach_candidates`, `get_all_candidates`, `get_job_candidates`:
+     Powers recruiter and admin dashboards with live pipeline metrics and candidate logs.
 """
 import json
 import logging
@@ -36,20 +54,32 @@ WHATSAPP_STAGE_NUMBERS = [
 ]
 
 
-# ------------------------------------------------------------
-# QUERY FUNCTIONS
-# ------------------------------------------------------------
+# ============================================================
+# QUERY & DASHBOARD FUNCTIONS
+# ============================================================
+
 def get_job_candidates(
     db: Session,
     job_id: UUID,
     limit: int = 10,
 ) -> list[dict]:
-    """
-    Return ranked candidates for a job.
+    """Retrieve ranked and shortlisted candidates associated with a specific job requisition.
 
-    The external Resume Matching API score stored in JobCandidate.overall_score
-    is the primary score. If an older NM-HireX ScreeningResult exists, its
-    breakdown is returned for backward compatibility, but it is not required.
+    Detailed Functionality:
+    - Queries `job_candidates` joined with `candidates` filtered by `job_id` and `is_shortlisted=True`.
+    - Orders candidates ascending by `ranking_position` (rank 1 first).
+    - Fetches the latest uploaded resume for each candidate (if present).
+    - Classifies candidate fit based on `overall_score` (>=85: STRONG, >=70: MODERATE, else: LOW).
+    - Formats contact history, interview status, resume metadata, and structured score breakdown.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID): Unique identifier of the target Job.
+        limit (int): Maximum number of top ranked candidates to return (default: 10).
+
+    Returns:
+        list[dict]: Array of structured candidate profiles including ranking, scores,
+                    contact details, recruitment status, and resume links.
     """
     rows = db.execute(
         select(JobCandidate, Candidate)
@@ -247,32 +277,107 @@ def get_job_candidates(
     return results
 
 def get_user_jobs(db: Session, user_id: UUID) -> list[dict]:
-    """Input: authenticated user UUID. Output: only that user's JDs."""
+    """Retrieve all job requisitions created by a specific recruiter or user.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID): ID of the recruiter/user whose jobs are being queried.
+
+    Returns:
+        list[dict]: List of job description dictionaries containing title, description,
+                    location, work mode, and creation timestamp.
+    """
     jobs = db.scalars(select(Job).where(Job.created_by == user_id).order_by(Job.created_at.desc())).all()
     return [{"job_id": str(j.id), "id": str(j.id), "title": j.title, "description": j.description, "location": j.location, "work_mode": j.work_mode, "file_name": None, "status": j.status,
              "created_at": j.created_at.isoformat() if j.created_at else None} for j in jobs]
 
+
 def get_user_job_candidates(db: Session, user_id: UUID, job_id: UUID) -> list[dict]:
-    """Input: authenticated user and job UUID. Output: Top 10 only when the user owns the JD."""
+    """Retrieve top shortlisted candidates for a job, verifying recruiter ownership.
+
+    Detailed Functionality:
+    - Verifies that the requested `job_id` was created by `user_id`.
+    - If unauthorized, raises `PermissionError`.
+    - Calls `get_job_candidates` with limit 50.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID): Authenticated user ID.
+        job_id (UUID): Job requisition ID.
+
+    Returns:
+        list[dict]: Ranked candidate profiles.
+
+    Raises:
+        PermissionError: If the job does not belong to the user.
+    """
     if not db.scalar(select(Job.id).where(Job.id == job_id, Job.created_by == user_id)):
         raise PermissionError("Job does not belong to current user")
     return get_job_candidates(db, job_id, limit=50)
 
+
 def get_admin_jobs(db: Session) -> list[dict]:
-    """Input: DB session. Output: all JDs with uploader and Top 10 summary."""
+    """Retrieve all system job requisitions with uploader metadata and top candidate previews.
+
+    Detailed Functionality:
+    - Joins `jobs` and `users` to identify who created each requisition.
+    - Embeds a preview list of top 10 ranked candidates for each job.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+
+    Returns:
+        list[dict]: Full catalog of jobs including uploader details and candidate previews.
+    """
     rows = db.execute(select(Job, User).join(User, User.id == Job.created_by).order_by(Job.created_at.desc())).all()
     return [{"job_id": str(j.id), "title": j.title, "file_name": None, "status": j.status,
              "uploaded_by": {"id": str(u.id), "name": u.name, "email": u.email},
              "top_10": get_job_candidates(db, j.id)} for j, u in rows]
 
+
 def get_admin_job_candidates(db: Session, job_id: UUID) -> list[dict]:
-    """Input: job UUID. Output: Top 10 persisted candidates for that JD."""
+    """Admin endpoint to retrieve all ranked candidates for any job in the system.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID): Target job requisition ID.
+
+    Returns:
+        list[dict]: Ranked candidate profiles.
+
+    Raises:
+        ValueError: If job_id is not found in the database.
+    """
     if not db.get(Job, job_id):
         raise ValueError("Job not found")
     return get_job_candidates(db, job_id)
 
+
 def get_user_dashboard(db: Session, user_id: UUID) -> dict:
-    """Input: user UUID. Output: WhatsApp outreach stats and recent candidates."""
+    """Compute aggregate recruiter metrics, WhatsApp outreach statistics, and recent candidates.
+
+    Detailed Functionality:
+    - Verifies user existence.
+    - Queries all candidate-job associations across the pipeline.
+    - Tallies candidate counts across all recruitment lifecycle stages:
+      * invites_sent: Candidates with status CONTACTED, INTERESTED, SCHEDULED, etc.
+      * interested: Candidates who expressed positive intent.
+      * meeting_scheduled: Confirmed interview bookings.
+      * not_interested: Declined or opted out candidates.
+      * awaiting: Contacted but awaiting candidate response.
+      * delivered / failed / skipped metrics.
+    - Compiles a sorted timeline of recent candidate interactions.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID): Authenticated recruiter user ID.
+
+    Returns:
+        dict: Recruiter dashboard KPIs and candidate activity feed.
+
+    Raises:
+        ValueError: If user_id is not found.
+    """
     user = db.get(User, user_id)
     if not user:
         raise ValueError("User not found")
@@ -402,14 +507,31 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
     }
 
 
-def _clean_whatsapp_phone(raw_phone: str | None) -> str:
-    """Normalize and strictly validate an Indian WhatsApp number.
+# ============================================================
+# LOW-LEVEL WHATSAPP TRANSPORT & PHONE SANITIZATION HELPERS
+# ============================================================
 
-    A valid Indian mobile number must have 10 mobile digits starting with 6, 7, 8, or 9:
-    - If 12 digits starting with country code 91 and clean[2] in '6789': return clean_phone
-    - If 10 digits starting with '6789' (and NOT starting with 91): return '91' + clean_phone
-    - If starting with 91 but total length is not 12 (e.g. 8, 9, 10, or 11 digits): REJECT (return "")
-    - Any other format, length, or prefix: REJECT (return "")
+def _clean_whatsapp_phone(raw_phone: str | None) -> str:
+    """Normalize and strictly validate an Indian mobile phone number for WhatsApp delivery.
+
+    Validation Rules & Specification:
+    - Strips all non-digit characters (spaces, dashes, plus signs, brackets).
+    - If leading zero is present (e.g. 09876543210), strips leading zeros.
+    - If number starts with country code '91':
+      * Must be exactly 12 digits total.
+      * The first digit of the mobile number (position index 2) must be 6, 7, 8, or 9.
+      * If length is not exactly 12, it is treated as an incomplete number and rejected (returns "").
+    - If number does NOT start with '91':
+      * Must be exactly 10 digits total.
+      * The first digit must be 6, 7, 8, or 9.
+      * Automatically prepends '91' to form a valid 12-digit E.164-compatible Indian mobile number.
+    - Any other length, prefix, or invalid string format returns "" (rejected).
+
+    Parameters:
+        raw_phone (str | None): Input phone string in any arbitrary format.
+
+    Returns:
+        str: 12-digit normalized phone number starting with '91', or empty string if invalid.
     """
     if not raw_phone:
         return ""
@@ -439,7 +561,16 @@ def _clean_whatsapp_phone(raw_phone: str | None) -> str:
 
 
 def _whatsapp_headers() -> dict:
-    """Build NMVE WhatsApp headers from server-side configuration."""
+    """Construct HTTP authorization and content headers for the NMVE WhatsApp messaging API.
+
+    Detailed Functionality:
+    - Resolves Key 1 (`WHATSAPP_MESSAGE_API_KEY` or `WHATSAPP_API_KEY`) from environment or settings.
+    - Injects `Bearer <api_key>` into the `Authorization` header and sets `api-key` header.
+    - Note: This is Key 1 (Messaging), strictly distinct from Key 2 (Gateway).
+
+    Returns:
+        dict: Headers dictionary with Content-Type, Accept, and authentication credentials.
+    """
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -459,7 +590,19 @@ def _whatsapp_headers() -> dict:
 
 
 def _extract_provider_message_id(response_body: str | dict | None) -> str | None:
-    """Extract a provider message ID without assuming one fixed NMVE response shape."""
+    """Recursively search for and extract the upstream message ID from a provider response payload.
+
+    Detailed Functionality:
+    - Scans top-level and nested dictionary keys ('messageId', 'message_id', 'externalMessageId',
+      'external_message_id', 'id') inside 'data', 'result', or 'message' containers.
+    - Ensures provider ID tracing is preserved even if the external gateway modifies response wrappers.
+
+    Parameters:
+        response_body (str | dict | None): Raw or parsed JSON response from the messaging provider.
+
+    Returns:
+        str | None: Extracted message ID string, or None if not found.
+    """
     if isinstance(response_body, dict):
         for key in (
             "messageId",
@@ -485,15 +628,25 @@ def _extract_provider_message_id(response_body: str | dict | None) -> str | None
 def _send_whatsapp_payload(
     payload: dict,
 ) -> tuple[bool, dict | None, str | None]:
-    """
-    Send a WhatsApp payload to NMVE.
+    """Execute low-level HTTP dispatch of a WhatsApp payload (template or plain text) to NMVE.
 
-    In test mode, the destination is ALWAYS
-    WHATSAPP_TEST_NUMBER.
+    Detailed Functionality:
+    - Routes templates to `/template-messages` and plain text to `/messages` endpoints.
+    - Test Mode Enforcement:
+      * When `WHATSAPP_TEST_MODE=True`, destination phone is forced to `WHATSAPP_TEST_NUMBER`.
+      * If test mode is enabled but test number is missing/invalid, safely blocks dispatch.
+    - Dispatches HTTP POST with a 20-second timeout.
+    - Extracts `provider_message_id` on success.
+    - Returns delivery status tuple.
 
-    If test mode is enabled but the test number is missing,
-    the message is blocked to prevent accidental delivery
-    to a real candidate.
+    Parameters:
+        payload (dict): Ready-to-send JSON dictionary adhering to NMVE WhatsApp specifications.
+
+    Returns:
+        tuple[bool, dict | None, str | None]:
+            - success (bool): True if HTTP 2xx and valid response received.
+            - parsed_response (dict | None): Parsed JSON response body.
+            - provider_message_id (str | None): Upstream message ID string.
     """
 
     base_url = getattr(
@@ -663,18 +816,30 @@ def _send_whatsapp_to_candidate(
     candidate_id: UUID,
     target_phone: str | None = None,
 ):
-    """
-    Send the initial NMVE WhatsApp template to one candidate.
+    """Send the initial recruitment outreach WhatsApp template to a candidate.
 
-    TEST MODE:
-        WHATSAPP_TEST_NUMBER is ALWAYS used.
+    Detailed Functionality:
+    - Queries Candidate and JobCandidate records from database.
+    - Resolves recipient phone number:
+      * Test Mode (`WHATSAPP_TEST_MODE=True`): Forced to `WHATSAPP_TEST_NUMBER` (blocks if missing).
+      * Staging Mode: If target is in `WHATSAPP_STAGE_NUMBERS`, directs to stage phone.
+      * Live Mode: Uses `candidate.phone`.
+    - Normalizes phone via `_clean_whatsapp_phone()`.
+    - Assembles dynamic template parameters (Candidate Name, Role Title, Company Name).
+    - Sends template payload via `_send_whatsapp_payload()`.
+    - On success:
+      * Records outbound contact entry in `candidate_contacts` table.
+      * Advances `JobCandidate.recruitment_status` from 'NEW'/'SHORTLISTED' to 'CONTACTED'.
+    - On failure: Logs error and returns False without breaking transaction.
 
-    NORMAL MODE:
-        target_phone -> WHATSAPP_STAGE_NUMBER -> candidate.phone
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID): Job requisition ID.
+        candidate_id (UUID): Candidate ID.
+        target_phone (str | None): Optional phone override for testing.
 
-    The function records the successful outbound message in
-    candidate_contacts and moves a NEW candidate to CONTACTED.
-    No candidate score is calculated here.
+    Returns:
+        bool: True if message was successfully delivered by provider, False otherwise.
     """
 
     print(
@@ -923,10 +1088,20 @@ def _send_whatsapp_text_message(
     raw_phone: str,
     text_message: str,
 ):
-    """
-    Send a plain-text WhatsApp message through NMVE.
-    """
+    """Send a plain-text WhatsApp message through NMVE to a specific phone number.
 
+    Detailed Functionality:
+    - Normalizes raw recipient phone number via `_clean_whatsapp_phone()`.
+    - Constructs WhatsApp text message payload with `preview_url: True` to ensure links render as preview cards.
+    - Dispatches payload via `_send_whatsapp_payload()`.
+
+    Parameters:
+        raw_phone (str): Recipient phone number in arbitrary format.
+        text_message (str): Full text message string to deliver.
+
+    Returns:
+        bool: True if message was successfully dispatched, False otherwise.
+    """
     try:
 
         clean_phone = _clean_whatsapp_phone(
@@ -974,11 +1149,22 @@ def _send_whatsapp_cta_message(
     raw_phone: str,
     job_candidate_id: str,
 ):
-    """
-    Send the interview scheduling CTA,
-    with text fallback.
-    """
+    """Send the interactive interview scheduling invitation (CTA) link to a candidate.
 
+    Detailed Functionality:
+    - Normalizes recipient phone number.
+    - Resolves public frontend domain (`FRONTEND_URL`), preventing localhost leakage.
+    - Constructs the candidate's unique booking URL: `{frontend_url}/schedule/{job_candidate_id}`.
+    - Formulates an engaging invitation message with helpful instructions to save contact if links are unclickable.
+    - Dispatches via `_send_whatsapp_text_message()`.
+
+    Parameters:
+        raw_phone (str): Candidate's WhatsApp phone number.
+        job_candidate_id (str): Unique JobCandidate schedule UUID.
+
+    Returns:
+        bool: True if delivery was initiated successfully, False otherwise.
+    """
     clean_phone = _clean_whatsapp_phone(
         raw_phone
     )
@@ -1017,14 +1203,21 @@ def _send_whatsapp_cta_message(
     )
 
 
-
-
-
 def _candidate_has_contact_history(
     db: Session,
     job_candidate_id: UUID,
 ) -> bool:
-    """Return True when WhatsApp/email/SMS contact already exists for this requisition."""
+    """Check if an outbound contact record already exists for this candidate on this job.
+
+    Used as an idempotency guard to prevent duplicate WhatsApp template dispatches.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_candidate_id (UUID): JobCandidate identifier.
+
+    Returns:
+        bool: True if at least one contact record exists in `candidate_contacts`, False otherwise.
+    """
     return db.scalar(
         select(CandidateContact.id)
         .where(
@@ -1034,9 +1227,23 @@ def _candidate_has_contact_history(
     ) is not None
 
 
-
 def _classify_whatsapp_response(message: str) -> str:
-    """Simple deterministic YES/NO classifier for recruitment responses."""
+    """Classify an inbound candidate WhatsApp reply into recruitment intent categories.
+
+    Classification Engine:
+    - Normalizes reply text to lower-case.
+    - Negative regex matching: detects phrases like 'not interested', 'no thanks', 'decline', 'not looking', 'no'.
+      Returns: 'NOT_INTERESTED'.
+    - Positive regex matching: detects phrases like 'yes', 'interested', 'sure', 'ok', 'okay', 'proceed', 'interview', 'schedule'.
+      Returns: 'INTERESTED'.
+    - Fallback: returns 'UNKNOWN' for ambiguous or conversational queries.
+
+    Parameters:
+        message (str): Candidate's inbound text message string.
+
+    Returns:
+        str: 'INTERESTED' | 'NOT_INTERESTED' | 'UNKNOWN'
+    """
     text_value = (message or "").strip().lower()
 
     negative_patterns = [
@@ -1075,7 +1282,37 @@ def handle_whatsapp_webhook(
     db: Session,
     payload: dict,
 ) -> dict:
-    """Process an inbound NMVE WhatsApp webhook and advance the recruitment workflow."""
+    """Process an inbound NMVE WhatsApp webhook event and advance the recruitment pipeline.
+
+    Detailed Functionality:
+    1. Payload Extraction:
+       - Recursively traverses arbitrary nested JSON structures to extract sender phone number
+         and incoming text message (handles button clicks, interactive replies, plain text).
+    2. Number Sanitization & Matching:
+       - Cleans phone via `_clean_whatsapp_phone()`.
+       - Matches sender against Candidate and JobCandidate records across stages.
+    3. Conversation Logging:
+       - Inserts inbound communication log into `candidate_contacts` (`message_type="INBOUND"`).
+    4. Intent Classification & Workflow Execution:
+       - Runs NLP classifier `_classify_whatsapp_response()`.
+       - If 'INTERESTED':
+         * Updates status to 'INTERESTED'.
+         * Dispatches automated CTA scheduling link message (`_send_whatsapp_cta_message()`).
+         * Logs outbound CTA link message in `candidate_contacts`.
+       - If 'NOT_INTERESTED':
+         * Updates status to 'NOT_INTERESTED'.
+         * Sends polite opt-out acknowledgment text.
+       - If 'UNKNOWN':
+         * Updates status to 'REPLIED'.
+         * Sends friendly guidance prompt encouraging the candidate to reply YES to schedule.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        payload (dict): Raw JSON webhook payload received from NMVE WhatsApp provider.
+
+    Returns:
+        dict: Summary of webhook processing containing status intent, candidate ID, and message text.
+    """
 
     def find_value(data, keys):
         if isinstance(data, dict):
@@ -1437,7 +1674,40 @@ def schedule_candidate_interview(
     interview_link: str | None = None,
     is_reschedule: bool = False,
 ) -> dict:
-    """Persist the selected interview slot and send the confirmation by WhatsApp."""
+    """Persist the selected interview appointment slot and dispatch WhatsApp confirmation.
+
+    Detailed Functionality:
+    1. Validation:
+       - Verifies JobCandidate exists in database.
+       - Disallows scheduling if candidate status is 'NOT_INTERESTED'.
+    2. Reschedule Token Management:
+       - If initial booking (`is_reschedule=False`), generates a secure UUID4 `reschedule_token`.
+       - If rescheduling (`is_reschedule=True`), invalidates the token to enforce the business rule:
+         candidates may only reschedule once.
+    3. Interview State Persistence:
+       - Stores `interview_scheduled_at` timestamp.
+       - Sets interview link (sanitizing legacy Teams URLs to `https://interview.teckvalley.com/`).
+       - Updates `recruitment_status = 'INTERVIEW_SCHEDULED'`.
+       - Resets reminder flags: `reminder_24h_sent = False`, `reminder_1h_sent = False`.
+    4. WhatsApp Confirmation Dispatch:
+       - Formulates personalized confirmation message containing date, time, interview link,
+         and one-click reschedule URL (`{FRONTEND_URL}/reschedule/{token}`).
+       - Dispatches via `_send_whatsapp_text_message()`.
+       - Records outbound entry in `candidate_contacts` table.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_candidate_id (UUID): JobCandidate identifier.
+        scheduled_at (datetime): Confirmed appointment datetime.
+        interview_link (str | None): Candidate test URL (registrationUrl) or meeting link.
+        is_reschedule (bool): True if triggered from the rescheduling portal.
+
+    Returns:
+        dict: Confirmation payload with scheduled timestamp, link, status, and delivery result.
+
+    Raises:
+        ValueError: If JobCandidate is not found or candidate previously declined ('NOT_INTERESTED').
+    """
     job_candidate = db.get(JobCandidate, job_candidate_id)
     if not job_candidate:
         raise ValueError("JobCandidate not found")
@@ -1527,7 +1797,26 @@ def get_outreach_candidates(
     user_id: UUID,
     candidate_id: UUID | None = None,
 ) -> list[dict]:
-    """Return candidates currently in the WhatsApp recruitment pipeline."""
+    """Retrieve all candidates currently engaged in the WhatsApp outreach pipeline.
+
+    Detailed Functionality:
+    - Queries `job_candidates` joined with `jobs` and `candidates`.
+    - Filters by active recruitment statuses ('CONTACTED', 'INTERESTED', 'NOT_INTERESTED',
+      'INTERVIEW_LINK_SENT', 'INTERVIEW_SCHEDULED').
+    - For each candidate:
+      * Queries the latest inbound WhatsApp response from `candidate_contacts`.
+      * Evaluates response intent (`_classify_whatsapp_response()`).
+      * Queries the latest outbound delivery status (SENT, DELIVERED, FAILED).
+      * Gathers interview schedule timestamps and meeting links.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID): Authenticated recruiter user ID.
+        candidate_id (UUID | None): Optional filter for a specific candidate UUID.
+
+    Returns:
+        list[dict]: Array of pipeline candidate objects with comprehensive messaging and interview states.
+    """
     q = (
         select(JobCandidate, Job, Candidate)
         .join(Job, Job.id == JobCandidate.job_id)
@@ -1645,7 +1934,27 @@ def update_candidate_status(
     status: str,
     target_phone: str | None = None,
 ):
-    """Update recruitment status and trigger initial WhatsApp when appropriate."""
+    """Update a candidate's recruitment lifecycle status and trigger outreach if transitioning to CONTACTED.
+
+    Detailed Functionality:
+    - Queries `JobCandidate` matching `job_id` and `candidate_id`.
+    - Updates `recruitment_status` to the uppercase target status.
+    - If status changes to 'CONTACTED' and previous status was not 'CONTACTED', automatically
+      triggers initial WhatsApp template delivery via `_send_whatsapp_to_candidate()`.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID): Target job UUID.
+        candidate_id (UUID): Target candidate UUID.
+        status (str): New recruitment status (e.g. 'CONTACTED', 'REJECTED', 'SHORTLISTED').
+        target_phone (str | None): Optional phone override.
+
+    Returns:
+        dict: Status update result containing old and new status.
+
+    Raises:
+        ValueError: If JobCandidate record is not found.
+    """
     job_candidate = db.scalar(
         select(JobCandidate).where(
             JobCandidate.job_id == job_id,
@@ -1683,7 +1992,24 @@ def bulk_update_candidate_status(
     status: str = "CONTACTED",
     target_phone: str | None = None,
 ) -> dict:
-    """Update recruitment status for multiple candidates and trigger WhatsApp invites."""
+    """Batch-update recruitment status for a list of candidates and dispatch WhatsApp invites.
+
+    Detailed Functionality:
+    - Iterates over each candidate ID in `candidate_ids`.
+    - Calls `update_candidate_status()` for each candidate.
+    - Catches individual candidate failures gracefully so batch execution completes.
+    - Aggregates success and failure counts.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID): Job requisition UUID.
+        candidate_ids (list[UUID]): List of candidate UUIDs to update.
+        status (str): Target status (default: 'CONTACTED').
+        target_phone (str | None): Optional phone override for test runs.
+
+    Returns:
+        dict: Batch execution summary with total, sent, failed, and per-candidate results.
+    """
     results = []
     sent_count = 0
     failed_count = 0
@@ -1721,7 +2047,21 @@ def bulk_update_candidate_status(
 
 
 def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
-    """Return unique candidates currently in the recruitment workflow."""
+    """Retrieve distinct candidates progressing through advanced interview stages.
+
+    Detailed Functionality:
+    - Queries candidates with statuses: 'INTERESTED', 'INTERVIEW_LINK_SENT', 'INTERVIEW',
+      'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'.
+    - Performs in-memory deduplication so each candidate is listed once with their most recent job context.
+    - Gathers interview appointment timestamps, test links, and contact history.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID): Authenticated recruiter user ID.
+
+    Returns:
+        list[dict]: Array of candidate profile dictionaries in interview stages.
+    """
     rows = db.execute(
         select(Candidate, JobCandidate, Job)
         .join(
@@ -1961,7 +2301,21 @@ def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
 # ============================================================
 
 def _is_automate_yes(val) -> bool:
-    """Helper to interpret 'automate' flag (defaulting to True/yes)."""
+    """Evaluate whether the recruiter opted for automated WhatsApp message dispatch.
+
+    Detailed Functionality:
+    - Interprets the `automate` flag passed to `/api/outreach/send-array` or functions.
+    - True/yes values: True, "yes", "y", "true", "1", "auto" -> triggers immediate WhatsApp sending.
+    - False/no values: False, "no", "n", "false", "0" -> queues candidates as 'PENDING_OUTREACH'
+      for manual recruiter review and batch selection on `/outreach/pending`.
+    - Defaults to True if value is None.
+
+    Parameters:
+        val (Any): Input flag value (string, boolean, integer, or None).
+
+    Returns:
+        bool: True if automated sending is active, False if queued for manual review.
+    """
     if val is None:
         return True
     if isinstance(val, bool):
@@ -1978,23 +2332,41 @@ def send_naukri_outreach_array(
     user_id: UUID | None = None,
     automate: str | bool | None = "yes",
 ) -> dict:
-    """
-    Send the candidate_shortlisted_outreach WhatsApp template to an array of
-    candidates supplied by the recruiter or an external system.
+    """Process an array of candidate records imported from Naukri, ATS, or recruiter spreadsheets.
 
-    Each entry in ``candidates`` can have:
-        - no    : serial number OR phone number (if >= 10 digits)
-        - name  : candidate full name
-        - role  : applied / shortlisted role
-        - phone : WhatsApp-compatible phone number (with or without country code)
+    Detailed End-to-End Workflow:
+    1. Requisition & Entity Upsert:
+       - If `job_id` is provided, attaches candidates to that job; otherwise dynamically finds or
+         creates a Job record matching each candidate's applied role title.
+       - Matches candidates by phone or email to prevent duplicate candidate records.
+       - Stores rich metadata: name, phone, email, current company, role, and experience years.
+       - Upserts `JobCandidate` association record.
+    2. Branching Logic based on `automate`:
+       - If `automate="yes"` (or True):
+         * Formulates WhatsApp template (`candidate_shortlisted_outreach`) with candidate name, role, and company.
+         * Dispatches WhatsApp message immediately via Key 1 (`WHATSAPP_MESSAGE_API_KEY`).
+         * On success: sets `recruitment_status = 'CONTACTED'` and logs outbound in `candidate_contacts`.
+         * On failure: sets `recruitment_status = 'FAILED'`.
+       - If `automate="no"` (or False):
+         * Bypasses immediate WhatsApp dispatch.
+         * Sets `recruitment_status = 'PENDING_OUTREACH'`.
+         * Candidate appears on the `/outreach/pending` frontend page for recruiter selection.
+    3. Resilient Error Handling:
+       - Skips entries missing mandatory name or phone numbers.
+       - Catches individual candidate exceptions without interrupting batch processing.
+    4. Execution Summary:
+       - Returns counts of sent, queued, skipped, and failed candidates along with per-candidate details.
 
-    The function:
-      1. Determines or creates a Job row (if job_id not given, creates one per role).
-      2. Finds or creates a Candidate row (matched by phone).
-      3. Finds or creates a JobCandidate row.
-      4. Sends the WhatsApp template via NMVE.
-      5. Logs the outbound message in candidate_contacts.
-      6. Returns a summary dict.
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_id (UUID | None): Optional target job UUID.
+        candidates (list[dict] | None): Array of candidate input dicts (keys: name, phone/no/contact_no, role, email, etc.).
+        company_name (str | None): Recruiting company name displayed in template text.
+        user_id (UUID | None): Authenticated recruiter user ID.
+        automate (str | bool | None): 'yes' for instant WhatsApp send; 'no' for pending queue.
+
+    Returns:
+        dict: Execution summary containing counts (total, sent, queued, skipped, failed) and candidate items.
     """
     _company = company_name or getattr(settings, "WHATSAPP_COMPANY_NAME", "the company")
 
@@ -2343,9 +2715,21 @@ def get_pending_outreach_candidates(
     db: Session,
     user_id: UUID | None = None,
 ) -> list[dict]:
-    """
-    Return candidates queued for manual outreach (recruitment_status='PENDING_OUTREACH')
-    who have not received an outbound WhatsApp outreach message yet.
+    """Retrieve candidates queued for manual outreach review on the frontend portal.
+
+    Detailed Functionality:
+    - Queries all candidates where `JobCandidate.recruitment_status == 'PENDING_OUTREACH'`.
+    - Double checks that no prior outbound contact history exists (`_candidate_has_contact_history()`).
+    - Formats candidates with contact details, current company, applied role, experience,
+      and job requisition metadata.
+    - Used directly by `GET /api/outreach/pending` to populate the table on `/outreach/pending`.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        user_id (UUID | None): Optional recruiter ID filter.
+
+    Returns:
+        list[dict]: Array of candidates awaiting recruiter outreach selection.
     """
     query = (
         select(Candidate, JobCandidate, Job)
@@ -2391,12 +2775,28 @@ def send_pending_outreach_candidates(
     db: Session,
     job_candidate_ids: list[UUID],
 ) -> dict:
-    """
-    Send WhatsApp outreach messages (Key 1) to selected pending candidates.
-    After sending, sets recruitment_status to 'CONTACTED', logs CandidateContact,
-    and returns a summary. The subsequent flow (WhatsApp reply -> slot booking ->
-    gateway add_candidate with Key 2 -> confirmation WhatsApp with Key 1) continues
-    identically.
+    """Manually dispatch WhatsApp template invitations to recruiter-selected pending candidates.
+
+    Detailed Functionality:
+    - Called when a recruiter selects one, multiple, or all candidates on `/outreach/pending`
+      and clicks the WhatsApp icon action button (`POST /api/outreach/send-pending`).
+    - For each selected `JobCandidate`:
+      * Verifies candidate exists and has not already received an outreach invite.
+      * Normalizes candidate phone number via `_clean_whatsapp_phone()`.
+      * Builds template payload for `candidate_shortlisted_outreach` with candidate name,
+        applied role, and company name.
+      * Dispatches template via Key 1 (`WHATSAPP_MESSAGE_API_KEY`).
+      * On delivery success: updates `recruitment_status = 'CONTACTED'`, logs outbound in `candidate_contacts`.
+      * The subsequent flow (candidate WhatsApp reply -> interest classification ->
+        slot booking -> gateway add_candidate via Key 2 -> confirmation WhatsApp via Key 1)
+        continues identically to automated mode.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        job_candidate_ids (list[UUID]): List of selected `JobCandidate` UUIDs to contact.
+
+    Returns:
+        dict: Dispatch summary with total, sent, failed, and skipped counts.
     """
     callback_url = getattr(
         settings,

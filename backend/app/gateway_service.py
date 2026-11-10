@@ -1,10 +1,15 @@
 """WhatsApp Integration Gateway Service Layer.
 
-Provides the 3 core gateway integration functions:
-1. fetch_schedules (fetchSchedules): loops through all pages to retrieve all scheduled interviews
-2. fetch_interview_results (fetchInterviewResults): loops through all pages for interview results
-3. add_candidate (addCandidate): builds exact candidate payload with fixed ratings/rounds and calls write API
-4. join_schedules_and_results: joins interview results and schedule records by schedule_id and requisition_id
+This module provides the core service-level orchestration functions connecting the
+NM-HireX recruitment platform to the external WhatsApp Integration Gateway (NMVE).
+
+Core Responsibilities:
+1. `fetch_schedules`: Retrieves scheduled interview appointments with automatic pagination.
+2. `fetch_interview_results`: Retrieves post-interview candidate results and evaluations with auto-pagination.
+3. `join_schedules_and_results`: Merges schedule records with interview test results in memory.
+4. `fetch_joined_interview_data`: Helper that fetches and merges both schedules and results in a single call.
+5. `add_candidate`: Validates candidate data, enforces fixed assessment parameters, strips internal flags,
+   calls the external gateway write API, and extracts the candidate's custom `registrationUrl` (test link).
 """
 
 import logging
@@ -19,30 +24,60 @@ from .gateway_client import (
     default_gateway_client,
 )
 
+# Configure dedicated service logger
 logger = logging.getLogger("nmhirex.gateway_service")
 
 
 # ============================================================
 # API 1: FETCH SCHEDULES
-# Scope: interviews:read
+# Scope Required: interviews:read
 # ============================================================
 def fetch_schedules(
     filters: dict[str, Any] | None = None,
     client: WhatsAppGatewayClient | None = None,
     auto_paginate: bool = True,
 ) -> dict[str, Any]:
-    """List scheduled interviews from WhatsApp Gateway.
+    """Retrieve scheduled interviews from the WhatsApp Integration Gateway.
 
-    Loops through all pages using `totalPages` to assemble a complete dataset.
+    Detailed Functionality:
+    - Queries the endpoint `/api/integrations/whatsapp/raw/schedules` via HTTP POST.
+    - Inspects pagination metadata (`totalPages`, `totalCount`, `pageSize`, `page`).
+    - If `auto_paginate` is True, iteratively loops through all remaining pages until all
+      scheduled candidates across the entire system are assembled into a single continuous list.
+    - Safe read call (`is_write=False`): enables automatic 5xx retries in the client.
 
-    Args:
-        filters: Optional filter dictionary (startDate, endDate, date, dateType,
-                 is_registered, requisition_id, email/candidate_email, added_by_email, search, all, etc.)
-        client: Optional custom WhatsAppGatewayClient instance
-        auto_paginate: Whether to loop through all pages (default True)
+    Parameters:
+        filters (dict[str, Any] | None): Optional search and date criteria. Supported keys:
+            - startDate (str): ISO start date filter (e.g. '2026-01-01').
+            - endDate (str): ISO end date filter (e.g. '2026-12-31').
+            - date (str): Specific calendar date.
+            - dateType (str): Field to match date on (e.g. 'interview_date' or 'created_at').
+            - is_registered (bool): Filter by candidate registration status.
+            - requisition_id (int | str): Filter by specific requisition / job ID.
+            - email / candidate_email (str): Candidate email lookup.
+            - added_by_email (str): Recruiter or system email filter.
+            - search (str): Free-text search term across candidate name and details.
+            - pageSize (int): Records per page (default: 50).
+            - page (int): Starting page number (default: 1).
+        client (WhatsAppGatewayClient | None): Optional custom client instance. Defaults to `default_gateway_client`.
+        auto_paginate (bool): If True (default), collects all pages; if False, returns only the first page.
 
     Returns:
-        dict: { "statusCode": 200, "totalCount": int, "totalPages": int, "data": [...] }
+        dict[str, Any]: Standardized response dictionary containing:
+            - statusCode (int): HTTP status from gateway (e.g. 200).
+            - message (str): Status message (e.g. 'Success').
+            - requestId (str | None): Gateway request ID for audit tracing.
+            - totalCount (int): Total records matching query across all pages.
+            - totalPages (int): Total page count reported by gateway.
+            - currentPage (int): Final page index fetched.
+            - pageSize (int): Page size used for pagination requests.
+            - data (list[dict[str, Any]]): Full array of retrieved schedule objects.
+
+    Raises:
+        GatewayAuthError: If Key 2 credentials are invalid or missing.
+        GatewayForbiddenError: If Key 2 lacks `interviews:read` scope.
+        GatewayRateLimitError: If gateway rate limits are exceeded.
+        GatewayServerError: If gateway experiences an internal failure.
     """
     gw = client or default_gateway_client
     base_payload = dict(filters or {})
@@ -63,6 +98,7 @@ def fetch_schedules(
             "pageSize": page_size,
         }
 
+        # Make read request to gateway schedules endpoint
         res = gw.post(
             "/api/integrations/whatsapp/raw/schedules",
             payload=payload,
@@ -87,6 +123,7 @@ def fetch_schedules(
             total_count,
         )
 
+        # Break if pagination is disabled, final page reached, or empty page encountered
         if not auto_paginate or current_page >= total_pages or not page_data:
             break
 
@@ -106,26 +143,55 @@ def fetch_schedules(
 
 # ============================================================
 # API 2: FETCH INTERVIEW RESULTS
-# Scope: interviews:read
+# Scope Required: interviews:read
 # ============================================================
 def fetch_interview_results(
     filters: dict[str, Any] | None = None,
     client: WhatsAppGatewayClient | None = None,
     auto_paginate: bool = True,
 ) -> dict[str, Any]:
-    """Retrieve post-interview results from WhatsApp Gateway.
+    """Retrieve candidate post-interview results and test scores from WhatsApp Gateway.
 
-    Loops through all pages using `totalPages` to assemble a complete dataset.
+    Detailed Functionality:
+    - Queries the endpoint `/api/integrations/whatsapp/raw/interview-list` via HTTP POST.
+    - Retrieves candidate test submissions, test scores, percentage ranks, outcome feedback,
+      and completion statuses (e.g. 'Passed', 'Failed', 'Pending').
+    - If `auto_paginate` is True, loops through all available result pages to compile a complete list.
+    - Safe read call (`is_write=False`): enables automatic 5xx retries.
 
-    Args:
-        filters: Optional filter dictionary (startDate, endDate, date,
-                 requisition_id, candidate_email, user_id/candidate_id,
-                 added_by_email, test_type, result, search, all)
-        client: Optional custom WhatsAppGatewayClient instance
-        auto_paginate: Whether to loop through all pages (default True)
+    Parameters:
+        filters (dict[str, Any] | None): Optional search and date criteria. Supported keys:
+            - startDate (str): ISO start date filter.
+            - endDate (str): ISO end date filter.
+            - date (str): Specific date filter.
+            - requisition_id (int | str): Filter by specific job requisition.
+            - candidate_email (str): Candidate email address.
+            - user_id / candidate_id (str): Candidate external ID.
+            - added_by_email (str): Recruiter email who invited the candidate.
+            - test_type (str): Test type filter (e.g. 'coding', 'aptitude', 'ai_interview').
+            - result (str): Outcome filter (e.g. 'Pass', 'Fail', 'Pending').
+            - search (str): Search term for candidate name or email.
+            - pageSize (int): Page size (default: 50).
+            - page (int): Initial page number (default: 1).
+        client (WhatsAppGatewayClient | None): Optional custom client instance. Defaults to `default_gateway_client`.
+        auto_paginate (bool): If True (default), collects all pages; if False, returns first page.
 
     Returns:
-        dict: { "statusCode": 200, "totalCount": int, "totalPages": int, "data": [...] }
+        dict[str, Any]: Standardized response dictionary containing:
+            - statusCode (int): HTTP status from gateway.
+            - message (str): Upstream message.
+            - requestId (str | None): Request ID for tracing.
+            - totalCount (int): Total records matching criteria.
+            - totalPages (int): Total pages available upstream.
+            - currentPage (int): Final page index fetched.
+            - pageSize (int): Page size utilized.
+            - data (list[dict[str, Any]]): Full array of candidate interview result records.
+
+    Raises:
+        GatewayAuthError: If Key 2 credentials are invalid or missing.
+        GatewayForbiddenError: If Key 2 lacks `interviews:read` scope.
+        GatewayRateLimitError: If rate limits are exceeded.
+        GatewayServerError: If gateway server error occurs.
     """
     gw = client or default_gateway_client
     base_payload = dict(filters or {})
@@ -146,6 +212,7 @@ def fetch_interview_results(
             "pageSize": page_size,
         }
 
+        # Make read request to gateway interview results endpoint
         res = gw.post(
             "/api/integrations/whatsapp/raw/interview-list",
             payload=payload,
@@ -170,6 +237,7 @@ def fetch_interview_results(
             total_count,
         )
 
+        # Break if pagination is disabled, final page reached, or empty page encountered
         if not auto_paginate or current_page >= total_pages or not page_data:
             break
 
@@ -194,10 +262,22 @@ def join_schedules_and_results(
     schedules: list[dict[str, Any]],
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Joins interview results with schedules.
+    """Relational join combining interview schedules with interview test results.
 
-    Matching criteria: interview_schedule_id (results) == schedule_id (schedules)
-    and requisition_id.
+    Detailed Functionality:
+    - Builds an in-memory index mapping schedules by compound key `f"{schedule_id}_{requisition_id}"`
+      and standalone `schedule_id`.
+    - Iterates over results, matching each result to its corresponding schedule record.
+    - Attaches the complete schedule dictionary inside each result object under the key `"schedule"`.
+    - Scans for scheduled interviews that have not yet generated a test result (e.g. upcoming or pending
+      interviews) and synthesizes a placeholder result entry with `result="Pending"` and empty score fields.
+
+    Parameters:
+        schedules (list[dict[str, Any]]): Array of schedule records from `fetch_schedules()`.
+        results (list[dict[str, Any]]): Array of test result records from `fetch_interview_results()`.
+
+    Returns:
+        list[dict[str, Any]]: Unified list of merged records containing both schedule and result data.
     """
     schedule_map: dict[str, dict[str, Any]] = {}
     for s in schedules:
@@ -210,6 +290,7 @@ def join_schedules_and_results(
     joined: list[dict[str, Any]] = []
     matched_schedule_ids = set()
 
+    # Join results with their corresponding schedule record
     for r in results:
         sched_id = str(r.get("interview_schedule_id") or "")
         req_id = str(r.get("requisition_id") or "")
@@ -225,7 +306,7 @@ def join_schedules_and_results(
         }
         joined.append(item)
 
-    # Append any schedules that had no interview result recorded yet
+    # Append any schedules that had no interview result recorded yet (pending interviews)
     for s in schedules:
         sched_id = str(s.get("schedule_id") or "")
         if sched_id and sched_id not in matched_schedule_ids:
@@ -254,7 +335,20 @@ def fetch_joined_interview_data(
     filters: dict[str, Any] | None = None,
     client: WhatsAppGatewayClient | None = None,
 ) -> dict[str, Any]:
-    """Fetches schedules and results, then merges them."""
+    """Fetch both schedules and results from gateway, then merge them into a single report.
+
+    Detailed Functionality:
+    - Convenience function that invokes `fetch_schedules()` and `fetch_interview_results()`
+      sequentially using the provided filters.
+    - Passes both result sets into `join_schedules_and_results()` to form an end-to-end dataset.
+
+    Parameters:
+        filters (dict[str, Any] | None): Filter criteria applicable to schedules and results.
+        client (WhatsAppGatewayClient | None): Optional client instance.
+
+    Returns:
+        dict[str, Any]: Response dictionary with total counts and unified merged records.
+    """
     schedules_res = fetch_schedules(filters, client=client)
     results_res = fetch_interview_results(filters, client=client)
 
@@ -274,31 +368,53 @@ def fetch_joined_interview_data(
 
 # ============================================================
 # API 3: ADD CANDIDATE & SCHEDULE INTERVIEW
-# Scope: candidates:write
+# Scope Required: candidates:write
 # ============================================================
 def add_candidate(
     candidate_input: dict[str, Any],
     client: WhatsAppGatewayClient | None = None,
 ) -> dict[str, Any]:
-    """Create a candidate and schedule the interview via WhatsApp Gateway.
+    """Create a candidate record and schedule their interview via the WhatsApp Gateway.
 
-    Payload format:
-    - user_name: candidate full name
-    - email: candidate email
-    - contact_no: digits only with country code (10 to 15 digits)
-    - current_company: candidate current company
-    - interview_date: YYYY-MM-DD
-    - interview_time: HH:mm
-    - technical_round: 1 (fixed)
-    - one2one_round: 1 (fixed)
-    - comm_skill_rating: 4 (fixed)
-    - cultural_fit_rating: 4 (fixed)
-    - operation: "addcandidate" (fixed)
-    - requisition_id / request_id: from database or fallback default
-    - other fields: empty string ""
+    Detailed Functionality:
+    1. Validation:
+       - Ensures `user_name` is present and non-empty.
+       - Validates `email` format via standard regex.
+       - Normalizes `contact_no`: strips spaces/dashes and verifies it contains 10-15 digits with country code.
+       - Validates `interview_date` in strict `YYYY-MM-DD` format.
+       - Validates `interview_time` in strict `HH:mm` 24-hour format (e.g. '14:30').
+    2. Workflow Isolation:
+       - Strictly strips the `automate` key (`candidate_input.pop("automate", None)`) to ensure internal
+         NM-HireX automation routing flags are never leaked to the external gateway.
+    3. Gateway Specification Enforcement:
+       - Injects fixed mandatory assessment criteria required by the gateway engine:
+         `technical_round: 1`, `one2one_round: 1`, `comm_skill_rating: 4`, `cultural_fit_rating: 4`,
+         and `operation: "addcandidate"`.
+       - Resolves `requisition_id` and `request_id` (fallback: `settings.NMHIREX_DEFAULT_REQUISITION_ID`, 506).
+    4. Execution & URL Extraction:
+       - Dispatches request via `POST /api/integrations/whatsapp/raw/add-candidate` with `is_write=True`.
+       - Extracts and normalizes the generated test URL (`registrationUrl` / `testUrl`).
+       - This `registrationUrl` is used as the candidate's online interview test link.
+
+    Parameters:
+        candidate_input (dict[str, Any]): Dictionary of candidate information. Required keys:
+            - user_name / name (str): Full candidate name.
+            - email (str): Valid email address.
+            - contact_no / phone / no (str): Phone number with country code (10-15 digits).
+            - current_company / company (str): Current employer name.
+            - interview_date (str): 'YYYY-MM-DD'.
+            - interview_time (str): 'HH:mm' in 24-hour time.
+            Optional keys: `experience`, `job_role`, `request_id`, `requisition_id`, `resume_url`, etc.
+        client (WhatsAppGatewayClient | None): Optional custom client instance.
 
     Returns:
-        dict: Gateway response including `registrationUrl`.
+        dict[str, Any]: Gateway API response dictionary containing `registrationUrl`.
+
+    Raises:
+        GatewayValidationError: If any required parameter is missing or violates formatting constraints.
+        GatewayAuthError: If Key 2 credentials are invalid or missing.
+        GatewayForbiddenError: If Key 2 lacks `candidates:write` scope.
+        GatewayServerError: If gateway fails during candidate registration.
     """
     gw = client or default_gateway_client
 
@@ -308,7 +424,7 @@ def add_candidate(
     # Strictly strip 'automate' flag so it never enters the addcandidate API payload
     candidate_input.pop("automate", None)
 
-    # 1. User Name
+    # 1. Validate User Name
     user_name = str(
         candidate_input.get("user_name")
         or candidate_input.get("name")
@@ -317,12 +433,12 @@ def add_candidate(
     if not user_name:
         raise GatewayValidationError("user_name is required.")
 
-    # 2. Email
+    # 2. Validate Email
     email = str(candidate_input.get("email") or "").strip()
     if not email or not re.match(r"^[^@]+@[^@]+\.[^@]+$", email):
         raise GatewayValidationError(f"A valid email is required (received: '{email}').")
 
-    # 3. Contact Number: digits only, 10 to 15 digits
+    # 3. Validate Contact Number: digits only, 10 to 15 digits with country code
     raw_contact = str(
         candidate_input.get("contact_no")
         or candidate_input.get("phone")
@@ -343,7 +459,7 @@ def add_candidate(
         or ""
     ).strip()
 
-    # 5. Interview Date (YYYY-MM-DD)
+    # 5. Validate Interview Date (YYYY-MM-DD)
     interview_date = str(candidate_input.get("interview_date") or "").strip()
     try:
         datetime.strptime(interview_date, "%Y-%m-%d")
@@ -352,7 +468,7 @@ def add_candidate(
             f"Invalid interview_date '{interview_date}': must be in YYYY-MM-DD format."
         )
 
-    # 6. Interview Time (HH:mm)
+    # 6. Validate Interview Time (HH:mm)
     interview_time = str(candidate_input.get("interview_time") or "").strip()
     try:
         datetime.strptime(interview_time, "%H:%M")
@@ -361,7 +477,7 @@ def add_candidate(
             f"Invalid interview_time '{interview_time}': must be in HH:mm 24-hour format (e.g. '11:00')."
         )
 
-    # 7. Request ID & Requisition ID
+    # 7. Request ID & Requisition ID resolution
     req_id_input = candidate_input.get("request_id")
     if req_id_input is not None and str(req_id_input).strip():
         req_str = str(req_id_input).strip()
@@ -386,7 +502,7 @@ def add_candidate(
     if requisition_id_val is None:
         requisition_id_val = int(getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506))
 
-    # 8. Build full payload adhering strictly to the user specification
+    # 8. Build full payload adhering strictly to gateway specifications
     payload: dict[str, Any] = {
         "user_name": user_name,
         "email": email,
@@ -410,14 +526,14 @@ def add_candidate(
         "salaryNegotiation": str(candidate_input.get("salaryNegotiation") or ""),
         "candidate_ques": str(candidate_input.get("candidate_ques") or ""),
         "interview_medium": str(candidate_input.get("interview_medium") or "NM Interview"),
-        "technical_round": 1,         # Fixed
-        "one2one_round": 1,           # Fixed
+        "technical_round": 1,         # Fixed gateway requirement
+        "one2one_round": 1,           # Fixed gateway requirement
         "cultural_fit": str(candidate_input.get("cultural_fit") or ""),
         "request_id": request_id_val,
         "requisition_id": requisition_id_val,
-        "comm_skill_rating": 4,       # Fixed
-        "cultural_fit_rating": 4,     # Fixed
-        "operation": "addcandidate",  # Fixed
+        "comm_skill_rating": 4,       # Fixed gateway requirement
+        "cultural_fit_rating": 4,     # Fixed gateway requirement
+        "operation": "addcandidate",  # Fixed gateway requirement
     }
 
     logger.info(
@@ -428,14 +544,14 @@ def add_candidate(
         payload["requisition_id"],
     )
 
-    # Execute request with is_write=True (disables 5xx auto-retries)
+    # Execute request with is_write=True (disables 5xx auto-retries to prevent duplicate mutations)
     res = gw.post(
         "/api/integrations/whatsapp/raw/add-candidate",
         payload=payload,
         is_write=True,
     )
 
-    # Capture registrationUrl / testUrl
+    # Capture and standardize registrationUrl / testUrl from various possible response shapes
     reg_url = (
         res.get("registrationUrl")
         or res.get("registration_url")
@@ -456,4 +572,3 @@ def add_candidate(
 fetchSchedules = fetch_schedules
 fetchInterviewResults = fetch_interview_results
 addCandidate = add_candidate
-
