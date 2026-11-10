@@ -1,8 +1,17 @@
-"""NM-HireX API routes.
+"""NM-HireX Central API Routing Layer.
 
-The new recruitment flow starts after the external Resume Matching API has
-already produced the matched candidates, Sheela ranking and candidate score.
-NM-HireX owns persistence, history checks, WhatsApp, scheduling and status.
+This module exposes the complete FastAPI REST routing surface for NM-HireX:
+1. Authentication (`/api/auth/*`): Recruiter registration, login, and JWT token issuance.
+2. WhatsApp Webhooks (`/api/webhooks/whatsapp`): Receives inbound candidate messages, classifies intent,
+   and triggers automated scheduling link delivery.
+3. Recruiter Pipeline & Jobs (`/api/user/*`, `/api/admin/*`): Dashboards, candidate management, status updates.
+4. Candidate Self-Scheduling (`/api/scheduling/*`): Available date/time slot generator and slot booking
+   endpoint that calls the Virtual Employee Gateway (`/add-candidate`) to generate test URLs.
+5. One-Click Rescheduling (`/api/reschedule/{token}`): Token-validated candidate rescheduling portal.
+6. Candidate Outreach Ingestion (`/api/outreach/*`): Bulk candidate ingestion (`/send-array`) supporting
+   both automated WhatsApp outreach (`automate="yes"`) and manual review queues (`automate="no"`),
+   as well as manual batch dispatching (`/send-pending`).
+7. Gateway Integration Endpoints (`/api/gateway/*`): Proxy endpoints for external integration gateway APIs.
 """
 
 from datetime import datetime, timedelta
@@ -54,70 +63,102 @@ from .tools_function import (
     send_pending_outreach_candidates,
 )
 
+# Main router for all application API endpoints with common prefix
 router = APIRouter(prefix="/api")
 
 
 # ============================================================
-# REQUEST SCHEMAS
+# REQUEST SCHEMAS (Pydantic Models)
 # ============================================================
 class ScheduleInterviewRequest(BaseModel):
-    scheduled_at: datetime
-    interview_link: str | None = None
+    """Payload schema for manually scheduling an interview slot."""
+    scheduled_at: datetime = Field(description="Target interview appointment timestamp in UTC/ISO format.")
+    interview_link: str | None = Field(default=None, description="Optional custom interview URL.")
 
 
 class InterviewStatusRequest(BaseModel):
-    status: str
+    """Payload schema for updating a candidate interview progress status."""
+    status: str = Field(description="New status string (e.g. 'SCHEDULED', 'COMPLETED', 'NO_SHOW').")
+
 
 class CandidateStatusRequest(BaseModel):
-    status: str
-    target_phone: str | None = None
+    """Payload schema for single candidate recruitment status transition."""
+    status: str = Field(description="Target recruitment status (e.g. 'CONTACTED', 'REJECTED').")
+    target_phone: str | None = Field(default=None, description="Optional override phone for test dispatch.")
 
 
 class BulkCandidateStatusRequest(BaseModel):
-    candidate_ids: list[UUID]
-    status: str = "CONTACTED"
-    target_phone: str | None = None
+    """Payload schema for batch updating multiple candidate statuses simultaneously."""
+    candidate_ids: list[UUID] = Field(description="Array of candidate UUIDs to update.")
+    status: str = Field(default="CONTACTED", description="Status to apply across all candidates.")
+    target_phone: str | None = Field(default=None, description="Optional override phone for testing.")
 
 
 class RequisitionJobRequest(BaseModel):
-    vereq_number: str = Field(min_length=1)
+    """Payload schema for requisition number lookups."""
+    vereq_number: str = Field(min_length=1, description="Virtual Employee requisition identifier.")
+
 
 class RescheduleRequest(BaseModel):
-    new_date: str
-    new_time: str
-    timezone: str = "UTC"
+    """Payload schema for candidate interview rescheduling requests."""
+    new_date: str = Field(description="Selected new calendar date (YYYY-MM-DD).")
+    new_time: str = Field(description="Selected new time slot (HH:mm AM/PM).")
+    timezone: str = Field(default="UTC", description="Candidate local timezone identifier.")
 
 
 class NaukriCandidateItem(BaseModel):
-    no: int | str | None = None
-    name: str
-    role: str
-    phone: str
+    """Schema representing an individual candidate entry in outreach imports."""
+    no: int | str | None = Field(default=None, description="Candidate serial number or phone index.")
+    name: str = Field(description="Candidate full name.")
+    role: str = Field(description="Target job title or role.")
+    phone: str = Field(description="Contact mobile number.")
 
 
 class NaukriOutreachRequest(BaseModel):
-    job_id: UUID
-    candidates: list[NaukriCandidateItem]
-    company_name: str | None = None
+    """Payload schema for structured candidate array outreach imports."""
+    job_id: UUID = Field(description="Job requisition UUID.")
+    candidates: list[NaukriCandidateItem] = Field(description="List of candidate records to process.")
+    company_name: str | None = Field(default=None, description="Display company name for WhatsApp template.")
+
 
 # ============================================================
-# HEALTH
+# HEALTH CHECK
 # ============================================================
 @router.get("/health")
 def health():
+    """Service health and liveness probe endpoint.
+
+    Returns:
+        dict: Service status confirmation.
+    """
     return {"status": "ok", "service": "NM-HireX"}
 
 
 # ============================================================
-# AUTH
+# AUTHENTICATION & RECRUITER ONBOARDING
 # ============================================================
 @router.post("/auth/register")
 def register(
-    name: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
+    name: str = Form(..., description="Recruiter full display name."),
+    email: str = Form(..., description="Unique email address."),
+    password: str = Form(..., description="Account password (minimum 8 characters)."),
     db: Session = Depends(get_db),
 ):
+    """Register a new recruiter account in NM-HireX.
+
+    Detailed Functionality:
+    - Normalizes and validates email address.
+    - Enforces minimum 8-character password constraint.
+    - Prevents duplicate registration if email already exists in `users` table.
+    - Hashes password using bcrypt.
+    - Inserts new User with role 'RECRUITER' and status 'APPROVED'.
+
+    Returns:
+        dict: Success message and public user profile summary.
+
+    Raises:
+        HTTPException(400): If password is too short or email is already registered.
+    """
     email = email.strip().lower()
 
     if len(password) < 8:
@@ -161,6 +202,21 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
+    """Authenticate recruiter credentials and issue a signed JWT access token.
+
+    Detailed Functionality:
+    - Verifies user email existence in `users` table.
+    - Validates account active state (`is_active == True`).
+    - Validates password hash using constant-time bcrypt verification.
+    - Issues JWT access token encoded with user claims (`sub`, `email`, `role`, `exp`).
+
+    Returns:
+        dict: Access token, token type ('bearer'), and user profile metadata.
+
+    Raises:
+        HTTPException(401): If credentials do not match or user does not exist.
+        HTTPException(403): If user account is inactive or suspended.
+    """
     email = form_data.username.strip().lower()
     user = db.query(User).filter(User.email == email).first()
 
@@ -387,7 +443,7 @@ def login(
 
 
 # ============================================================
-# WHATSAPP WEBHOOK
+# WHATSAPP WEBHOOK INGRESS
 # ============================================================
 @router.post("/webhooks/whatsapp")
 def api_whatsapp_webhook(
@@ -395,9 +451,23 @@ def api_whatsapp_webhook(
     x_webhook_secret: str | None = Header(
         default=None,
         alias="X-Webhook-Secret",
+        description="Optional shared secret header for verifying webhook authenticity.",
     ),
     db: Session = Depends(get_db),
 ):
+    """Receive and process inbound WhatsApp webhook payloads from the NMVE integration.
+
+    Detailed Functionality:
+    - Validates optional `X-Webhook-Secret` header if configured in settings.
+    - Extracts candidate phone number and inbound reply text.
+    - Classifies candidate reply intent (e.g. 'INTERESTED', 'NOT_INTERESTED').
+    - If 'INTERESTED', automatically dispatches the interview scheduling link (CTA).
+    - If 'NOT_INTERESTED', records decline status and sends polite acknowledgment.
+    - Logs all messages and delivery receipts in the `candidate_contacts` table.
+
+    Returns:
+        dict: Ingestion summary with classification intent and matched candidate IDs.
+    """
     print("="*50)
     print("WHATSAPP WEBHOOK RECEIVED!")
     print(f"PAYLOAD: {payload}")
@@ -417,80 +487,20 @@ def api_whatsapp_webhook(
 
 
 # ============================================================
-# INTERVIEW SCHEDULING
-# ============================================================
-# @router.post("/job-candidates/{job_candidate_id}/schedule")
-# def api_schedule_interview(
-#     job_candidate_id: UUID,
-#     data: ScheduleInterviewRequest,
-#     user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db),
-# ):
-#     jc = db.get(JobCandidate, job_candidate_id)
-#     if not jc:
-#         raise HTTPException(status_code=404, detail="JobCandidate not found")
-
-#     job = db.get(Job, jc.job_id)
-#     if not job:
-#         raise HTTPException(status_code=404, detail="Job not found")
-
-#     if user.role != "ADMIN" and job.created_by != user.id:
-#         raise HTTPException(status_code=403, detail="Not your job")
-
-#     try:
-#         return {
-#             "success": True,
-#             "data": schedule_candidate_interview(
-#                 db=db,
-#                 job_candidate_id=job_candidate_id,
-#                 scheduled_at=data.scheduled_at,
-#                 interview_link=data.interview_link,
-#             ),
-#         }
-#     except ValueError as exc:
-#         raise HTTPException(status_code=400, detail=str(exc))
-
-
-# @router.patch("/job-candidates/{job_candidate_id}/interview-status")
-# def api_interview_status(
-#     job_candidate_id: UUID,
-#     data: InterviewStatusRequest,
-#     user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db),
-# ):
-#     jc = db.get(JobCandidate, job_candidate_id)
-#     if not jc:
-#         raise HTTPException(status_code=404, detail="JobCandidate not found")
-
-#     job = db.get(Job, jc.job_id)
-#     if not job:
-#         raise HTTPException(status_code=404, detail="Job not found")
-
-#     if user.role != "ADMIN" and job.created_by != user.id:
-#         raise HTTPException(status_code=403, detail="Not your job")
-
-#     try:
-#         return {
-#             "success": True,
-#             "data": update_interview_status(
-#                 db=db,
-#                 job_candidate_id=job_candidate_id,
-#                 status=data.status,
-#             ),
-#         }
-#     except ValueError as exc:
-#         raise HTTPException(status_code=400, detail=str(exc))
-
-
-# ============================================================
-# USER / ADMIN VIEWS
+# USER & ADMIN VIEWS (Jobs, Candidates, Dashboards)
 # ============================================================
 @router.get("/user/jobs")
 def api_user_jobs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """List all job requisitions created by the currently authenticated recruiter.
+
+    Returns:
+        list[dict]: Array of job definitions belonging to the current user.
+    """
     return get_user_jobs(db, user.id)
+
 
 @router.post("/user/jobs/{job_id}/candidates/{candidate_id}/status")
 def api_update_candidate_status(
@@ -500,6 +510,19 @@ def api_update_candidate_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Update a candidate's recruitment lifecycle status for a job opening.
+
+    Detailed Functionality:
+    - Validates that the job exists and belongs to the authenticated user (or user is ADMIN).
+    - If transitioned to 'CONTACTED', automatically sends the initial WhatsApp template.
+
+    Returns:
+        dict: Success status and updated candidate status details.
+
+    Raises:
+        HTTPException(403): If the user does not have permission to modify the job.
+        HTTPException(404): If the job requisition is not found.
+    """
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -529,6 +552,11 @@ def api_bulk_update_candidate_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Batch-update recruitment status for multiple candidates associated with a job.
+
+    Returns:
+        dict: Summary containing counts of successful updates and individual results.
+    """
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -557,6 +585,11 @@ def api_user_candidates(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """List ranked and shortlisted candidates for a recruiter's job requisition.
+
+    Returns:
+        list[dict]: Array of candidate profiles ranked by matching score.
+    """
     try:
         return get_user_job_candidates(db, user.id, job_id)
     except PermissionError:
@@ -568,6 +601,11 @@ def api_admin_jobs(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Admin-only endpoint listing all jobs across the platform with recruiter metadata.
+
+    Returns:
+        list[dict]: Global job catalog with uploader information and candidate previews.
+    """
     return get_admin_jobs(db)
 
 
@@ -577,6 +615,11 @@ def api_admin_candidates(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Admin-only endpoint listing candidates for any job in the system without ownership checks.
+
+    Returns:
+        list[dict]: Ranked candidate profiles.
+    """
     try:
         return get_admin_job_candidates(db, job_id)
     except ValueError:
@@ -588,6 +631,11 @@ def api_user_dashboard(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Retrieve recruiter dashboard metrics, funnel conversion KPIs, and recent candidates.
+
+    Returns:
+        dict: Aggregate statistics (invites sent, interested, scheduled, delivery rates).
+    """
     return get_user_dashboard(db, user.id)
 
 
@@ -597,24 +645,60 @@ def api_user_outreach(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Retrieve all candidates actively engaged in the WhatsApp outreach pipeline.
+
+    Returns:
+        list[dict]: Candidate pipeline records with latest inbound reply and delivery statuses.
+    """
     return get_outreach_candidates(db, user.id, candidate_id=candidate_id)
+
 
 @router.get("/user/candidates")
 def api_user_all_candidates(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Retrieve unique candidates progressing through active interview stages.
+
+    Returns:
+        list[dict]: Array of distinct candidate profiles currently in interview workflow.
+    """
     return get_all_candidates(db, user.id)
 
+# ============================================================
+# CANDIDATE SELF-SCHEDULING & RESCHEDULING ENGINE
+# ============================================================
 class ScheduleConfirmRequest(BaseModel):
-    job_candidate_id: UUID
-    interview_date: str
-    interview_time: str
-    timezone: str = "Asia/Kolkata"
+    """Payload schema for candidate interview slot confirmation."""
+    job_candidate_id: UUID = Field(description="Target JobCandidate schedule record UUID.")
+    interview_date: str = Field(description="Selected interview date (YYYY-MM-DD).")
+    interview_time: str = Field(description="Selected interview time (e.g. '11:00 AM' or '14:30').")
+    timezone: str = Field(default="Asia/Kolkata", description="Candidate local timezone identifier.")
 
 
 def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
-    """Robustly parse date and time strings in various standard formats."""
+    """Robustly parse date and time strings across multiple standard and international formats.
+
+    Detailed Functionality:
+    - Normalizes date and time strings.
+    - Sequentially attempts parsing against standard date formats:
+      * '%Y-%m-%d %I:%M %p'
+      * '%Y-%m-%d %I:%M%p'
+      * '%Y-%m-%d %H:%M:%S'
+      * '%Y-%m-%d %H:%M'
+      * '%Y-%m-%d %I %p'
+    - Falls back to `dateutil.parser` for any non-standard locale formats.
+
+    Parameters:
+        date_str (str): Calendar date string.
+        time_str (str): Time string.
+
+    Returns:
+        datetime: Parsed Python datetime object.
+
+    Raises:
+        HTTPException(400): If the format cannot be parsed.
+    """
     time_clean = time_str.strip().upper()
     combined = f"{date_str.strip()} {time_clean}"
     
@@ -643,6 +727,15 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
 
 @router.get("/scheduling/dates")
 def api_scheduling_dates(timezone: str | None = "Asia/Kolkata"):
+    """Generate available interview dates starting from today in the candidate's timezone.
+
+    Detailed Functionality:
+    - Resolves candidate timezone using `zoneinfo.ZoneInfo` (defaulting to 'Asia/Kolkata').
+    - Returns a list of the next 7 consecutive dates available for booking.
+
+    Returns:
+        dict: List of ISO date strings (`{"dates": [{"date": "2026-11-10"}, ...]}`).
+    """
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     tz_name = timezone or "Asia/Kolkata"
@@ -665,6 +758,17 @@ def api_scheduling_slots(
     date: str | None = None,
     timezone: str | None = "Asia/Kolkata",
 ):
+    """Generate available 30-minute time slots for a given date in the candidate's timezone.
+
+    Detailed Functionality:
+    - Generates 30-minute interview intervals across 24 hours (e.g. '09:00 AM', '09:30 AM').
+    - If the requested date is today in the candidate's timezone, filters out time slots
+      that have already elapsed in wall-clock time.
+    - If the date is entirely in the past, returns an empty slot list.
+
+    Returns:
+        dict: List of formatted slot strings (`{"slots": ["10:00 AM", "10:30 AM", ...]}`).
+    """
     from zoneinfo import ZoneInfo
     tz_name = timezone or "Asia/Kolkata"
     try:
@@ -701,6 +805,26 @@ def api_scheduling_confirm(
     req: ScheduleConfirmRequest,
     db: Session = Depends(get_db)
 ):
+    """Confirm a candidate's selected interview appointment slot.
+
+    Detailed Workflow:
+    1. Validation: Parses datetime and verifies that the selected appointment is in the future.
+    2. Gateway Registration & Link Creation:
+       - Calls the external Virtual Employee Gateway write API (`add_candidate`) using Key 2.
+       - Maps `request_id = jc.id` and `requisition_id = cand.id`.
+       - Captures the generated `registrationUrl` (custom assessment test link).
+       - Persists `registrationUrl` to `job_candidates.registration_url`.
+    3. Interview Scheduling:
+       - Calls `schedule_candidate_interview()`.
+       - Issues single-use `reschedule_token`.
+       - Sets `recruitment_status = 'INTERVIEW_SCHEDULED'`.
+       - Normalizes test link to `https://interview.teckvalley.com/` if no custom URL returned.
+    4. WhatsApp Confirmation:
+       - Dispatches WhatsApp confirmation to the candidate via Key 1 containing test link and reschedule URL.
+
+    Returns:
+        dict: Confirmation payload with meeting link and formatted scheduled time.
+    """
     from zoneinfo import ZoneInfo
     from .tools_function import schedule_candidate_interview
     
@@ -801,6 +925,18 @@ def api_scheduling_confirm(
 
 @router.get("/reschedule/{token}")
 def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
+    """Fetch existing interview details for a candidate accessing the reschedule portal.
+
+    Detailed Functionality:
+    - Validates that the single-use `reschedule_token` exists and has not already been used.
+    - Retrieves candidate name, job title, and current appointment timestamp.
+
+    Returns:
+        dict: Existing interview details for display on `/reschedule/{token}`.
+
+    Raises:
+        HTTPException(404): If token is expired or invalid.
+    """
     from .models import JobCandidate, Candidate, Job
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
@@ -829,6 +965,23 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
 
 @router.post("/reschedule/{token}")
 def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depends(get_db)):
+    """Submit a new interview appointment time via candidate one-click rescheduling.
+
+    Detailed Functionality:
+    - Validates single-use `reschedule_token`.
+    - Parses new date and time, verifying it is strictly in the future.
+    - Updates `interview_scheduled_at` timestamp.
+    - Resets reminder flags (`reminder_24h_sent = False`, `reminder_1h_sent = False`).
+    - Invalidates `reschedule_token = None` (enforcing single-reschedule policy).
+    - Dispatches WhatsApp rescheduling confirmation message.
+
+    Returns:
+        dict: Success message with updated appointment datetime and meeting link.
+
+    Raises:
+        HTTPException(400): If new appointment time is in the past.
+        HTTPException(404): If token is invalid or already consumed.
+    """
     from zoneinfo import ZoneInfo
     from .models import JobCandidate
     from .tools_function import schedule_candidate_interview
@@ -878,13 +1031,7 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
 
 
 # ============================================================
-# CANDIDATE OUTREACH API (FOR WEB UI & EXTERNAL SYSTEMS)
-# POST /api/outreach/send-array
-# POST /api/outreach/invite
-# Accepts:
-# 1) [{ "name": "Rahul", "role": "Software Engineer", "no": "917439717970" }]
-# 2) { "name": "Rahul", "role": "Software Engineer", "no": "917439717970" }
-# 3) { "candidates": [...], "company_name": "Acme", "job_id": "..." }
+# CANDIDATE OUTREACH & BATCH ARRAY INGESTION
 # ============================================================
 @router.post("/outreach/send-array")
 @router.post("/outreach/invite")
@@ -892,10 +1039,25 @@ async def api_send_outreach_endpoint(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """
-    Unified candidate outreach endpoint.
-    Sends WhatsApp invite template to candidates and stores everything in DB.
-    Accessible by UI and external systems alike.
+    """Ingest an array or single candidate object for recruitment outreach.
+
+    Detailed Functionality:
+    - Flexible payload ingestion: supports a JSON array of candidates, a single candidate object,
+      or a wrapped envelope `{"candidates": [...], "company_name": "...", "automate": "yes"}`.
+    - Decodes Bearer token if present to attribute created jobs to the authenticated recruiter;
+      otherwise falls back to the default system Admin user.
+    - Automation Routing based on `automate`:
+      * If `automate="yes"`: dispatches initial WhatsApp template invitation immediately via Key 1,
+        logs message in `candidate_contacts`, and advances candidate to 'CONTACTED'.
+      * If `automate="no"`: records candidate in database with status 'PENDING_OUTREACH',
+        making them available for recruiter review and manual dispatch on `/outreach/pending`.
+
+    Returns:
+        dict: Execution summary with total, sent, queued, and skipped candidate metrics.
+
+    Raises:
+        HTTPException(400): If payload is not valid JSON or lacks mandatory candidate fields.
+        HTTPException(500): On unhandled database or processing exceptions.
     """
     from jose import jwt, JWTError
 
@@ -992,7 +1154,8 @@ async def api_send_outreach_endpoint(
 
 
 class SendPendingOutreachRequest(BaseModel):
-    job_candidate_ids: list[UUID]
+    """Payload schema for sending WhatsApp invites to selected pending candidates."""
+    job_candidate_ids: list[UUID] = Field(description="Array of JobCandidate UUIDs selected for outreach.")
 
 
 @router.get("/outreach/pending")
@@ -1000,9 +1163,15 @@ def api_get_pending_outreach(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Get candidates in the manual outreach queue (recruitment_status='PENDING_OUTREACH')
-    who have not had a WhatsApp outreach message sent yet.
+    """Retrieve candidates queued for manual outreach review (`recruitment_status='PENDING_OUTREACH'`).
+
+    Detailed Functionality:
+    - Queries all candidate records currently in the manual review queue that have not yet
+      received an outbound WhatsApp invitation.
+    - Used by the `/outreach/pending` frontend page to present selectable candidate tables.
+
+    Returns:
+        list[dict]: Array of candidate objects with company, role, phone, and experience.
     """
     return get_pending_outreach_candidates(db, user_id=user.id if user else None)
 
@@ -1013,8 +1182,16 @@ def api_send_pending_outreach(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Send WhatsApp outreach messages to selected candidates from the pending queue.
+    """Dispatch WhatsApp invitations to recruiter-selected candidates from the pending queue.
+
+    Detailed Functionality:
+    - Called when a recruiter selects one, multiple, or all candidates on `/outreach/pending`
+      and clicks the WhatsApp icon action button.
+    - Dispatches WhatsApp template message via Key 1 (`WHATSAPP_MESSAGE_API_KEY`).
+    - Updates candidate status to 'CONTACTED' and logs contact history.
+
+    Returns:
+        dict: Summary of dispatched messages (sent, failed, skipped).
     """
     try:
         res = send_pending_outreach_candidates(db, req.job_candidate_ids)
@@ -1026,7 +1203,7 @@ def api_send_pending_outreach(
 
 
 # ============================================================
-# WHATSAPP INTEGRATION GATEWAY API ROUTES
+# WHATSAPP INTEGRATION GATEWAY PROXY ENDPOINTS (Key 2)
 # ============================================================
 from .gateway_client import (
     GatewayError,
@@ -1046,7 +1223,19 @@ from .gateway_service import (
 
 
 def _handle_gateway_exception(exc: Exception):
-    """Translates typed GatewayError exceptions into FastAPI HTTPExceptions."""
+    """Translate low-level typed GatewayError exceptions into structured FastAPI HTTPExceptions.
+
+    Detailed Functionality:
+    - Extracts HTTP status code, request ID, and specific error code from `GatewayError`.
+    - Formats a clean JSON error response for API callers.
+    - Catches unexpected non-gateway exceptions and converts them to HTTP 500.
+
+    Parameters:
+        exc (Exception): Caught exception instance.
+
+    Raises:
+        HTTPException: Normalized FastAPI HTTPException.
+    """
     if isinstance(exc, GatewayError):
         raise HTTPException(
             status_code=exc.status_code,
@@ -1070,7 +1259,11 @@ def _handle_gateway_exception(exc: Exception):
 
 @router.post("/gateway/schedules")
 def api_post_gateway_schedules(filters: dict = Body(default={})):
-    """API 1: List scheduled interviews with pagination loop (POST)."""
+    """Retrieve scheduled interviews from WhatsApp Gateway via POST filter body.
+
+    Returns:
+        dict: List of scheduled interviews aggregated across all pages.
+    """
     try:
         return fetch_schedules(filters)
     except Exception as exc:
@@ -1079,21 +1272,25 @@ def api_post_gateway_schedules(filters: dict = Body(default={})):
 
 @router.get("/gateway/schedules")
 def api_get_gateway_schedules(
-    page: int = Query(1),
-    pageSize: int = Query(50),
-    startDate: str | None = Query(None),
-    endDate: str | None = Query(None),
-    date: str | None = Query(None),
-    dateType: str | None = Query("interview_date"),
-    is_registered: bool | None = Query(None),
-    requisition_id: str | None = Query(None),
-    candidate_email: str | None = Query(None),
-    added_by_email: str | None = Query(None),
-    search: str | None = Query(None),
-    all: bool | None = Query(None),
-    auto_paginate: bool = Query(True),
+    page: int = Query(1, description="Page index."),
+    pageSize: int = Query(50, description="Items per page."),
+    startDate: str | None = Query(None, description="Start date filter (YYYY-MM-DD)."),
+    endDate: str | None = Query(None, description="End date filter (YYYY-MM-DD)."),
+    date: str | None = Query(None, description="Specific calendar date."),
+    dateType: str | None = Query("interview_date", description="Field to filter date on."),
+    is_registered: bool | None = Query(None, description="Filter by candidate registration status."),
+    requisition_id: str | None = Query(None, description="Requisition filter."),
+    candidate_email: str | None = Query(None, description="Candidate email search."),
+    added_by_email: str | None = Query(None, description="Recruiter email."),
+    search: str | None = Query(None, description="Free-text search term."),
+    all: bool | None = Query(None, description="Fetch all flag."),
+    auto_paginate: bool = Query(True, description="Whether to iterate through all pages automatically."),
 ):
-    """API 1: List scheduled interviews with query parameters (GET)."""
+    """Retrieve scheduled interviews from WhatsApp Gateway via query parameters (GET).
+
+    Returns:
+        dict: Standardized schedule list with pagination metrics.
+    """
     filters = {
         "page": page,
         "pageSize": pageSize,
@@ -1126,7 +1323,11 @@ def api_get_gateway_schedules(
 
 @router.post("/gateway/interview-results")
 def api_post_gateway_interview_results(filters: dict = Body(default={})):
-    """API 2: Retrieve interview results with pagination loop (POST)."""
+    """Retrieve candidate interview assessment results from WhatsApp Gateway via POST body.
+
+    Returns:
+        dict: Array of candidate scores, outcomes, and feedback across pages.
+    """
     try:
         return fetch_interview_results(filters)
     except Exception as exc:
@@ -1135,22 +1336,26 @@ def api_post_gateway_interview_results(filters: dict = Body(default={})):
 
 @router.get("/gateway/interview-results")
 def api_get_gateway_interview_results(
-    page: int = Query(1),
-    pageSize: int = Query(50),
-    startDate: str | None = Query(None),
-    endDate: str | None = Query(None),
-    date: str | None = Query(None),
-    requisition_id: str | None = Query(None),
-    candidate_email: str | None = Query(None),
-    user_id: str | None = Query(None),
-    added_by_email: str | None = Query(None),
-    test_type: int | None = Query(None),
-    result: str | None = Query(None),
-    search: str | None = Query(None),
-    all: bool | None = Query(None),
-    auto_paginate: bool = Query(True),
+    page: int = Query(1, description="Page index."),
+    pageSize: int = Query(50, description="Items per page."),
+    startDate: str | None = Query(None, description="Start date filter."),
+    endDate: str | None = Query(None, description="End date filter."),
+    date: str | None = Query(None, description="Specific date filter."),
+    requisition_id: str | None = Query(None, description="Requisition ID filter."),
+    candidate_email: str | None = Query(None, description="Candidate email lookup."),
+    user_id: str | None = Query(None, description="Candidate ID filter."),
+    added_by_email: str | None = Query(None, description="Recruiter email filter."),
+    test_type: int | None = Query(None, description="Assessment test type ID."),
+    result: str | None = Query(None, description="Outcome filter ('Pass', 'Fail')."),
+    search: str | None = Query(None, description="Text search."),
+    all: bool | None = Query(None, description="Fetch all records flag."),
+    auto_paginate: bool = Query(True, description="Iterate all pages."),
 ):
-    """API 2: Retrieve interview results with query parameters (GET)."""
+    """Retrieve candidate interview assessment results from WhatsApp Gateway via query parameters (GET).
+
+    Returns:
+        dict: Standardized candidate test results with pagination metadata.
+    """
     filters = {
         "page": page,
         "pageSize": pageSize,
@@ -1186,12 +1391,16 @@ def api_get_gateway_interview_results(
 
 @router.get("/gateway/interviews-joined")
 def api_get_gateway_joined_interviews(
-    startDate: str | None = Query(None),
-    endDate: str | None = Query(None),
-    requisition_id: str | None = Query(None),
-    search: str | None = Query(None),
+    startDate: str | None = Query(None, description="Start date filter."),
+    endDate: str | None = Query(None, description="End date filter."),
+    requisition_id: str | None = Query(None, description="Requisition ID filter."),
+    search: str | None = Query(None, description="Candidate search term."),
 ):
-    """Joins scheduled interviews and interview results (Schedule ID + Requisition ID)."""
+    """Fetch schedules and interview assessment results merged relationally on `schedule_id` and `requisition_id`.
+
+    Returns:
+        dict: Merged dataset combining interview schedules with final test scores.
+    """
     filters = {}
     if startDate:
         filters["startDate"] = startDate
@@ -1214,7 +1423,122 @@ def api_post_gateway_add_candidate(
     candidate_input: dict = Body(...),
     db: Session = Depends(get_db),
 ):
-    """API 3: Create candidate and schedule interview on WhatsApp Gateway (WRITE)."""
+    """Register candidate on WhatsApp Gateway, schedule interview, and persist records in DB.
+
+    Detailed Workflow:
+    - Strips internal `automate` flag so it never leaks upstream.
+    - Finds or creates `Candidate`, `Job`, and `JobCandidate` records in PostgreSQL.
+    - Sets `requisition_id` to candidate UUID and `request_id` to schedule UUID.
+    - Calls external Gateway write API (`/api/integrations/whatsapp/raw/add-candidate`) via Key 2.
+    - Captures the generated `registrationUrl` (custom online test link).
+    - Saves `registrationUrl` and updates recruitment status to 'INTERVIEW_SCHEDULED'.
+
+    Returns:
+        dict: Gateway response containing candidate ID and `registrationUrl`.
+    """
+    try:
+        # Strictly ensure 'automate' key is never forwarded to add-candidate gateway API
+        candidate_input.pop("automate", None)
+
+        from .models import Candidate, JobCandidate, Job, User
+        from .tools_function import _clean_whatsapp_phone
+        from sqlalchemy import select
+
+        c_name = str(candidate_input.get("user_name") or candidate_input.get("name") or "").strip()
+        c_phone = str(candidate_input.get("contact_no") or candidate_input.get("phone") or candidate_input.get("no") or "").strip()
+        c_email = str(candidate_input.get("email") or "").strip()
+        c_company = str(candidate_input.get("current_company") or candidate_input.get("company") or "").strip()
+        c_role = str(candidate_input.get("job_role") or candidate_input.get("role") or "").strip()
+        c_date = str(candidate_input.get("interview_date") or "").strip()
+        c_time = str(candidate_input.get("interview_time") or "").strip()
+
+        cand = None
+        clean_phone = _clean_whatsapp_phone(c_phone) if c_phone else ""
+        if clean_phone:
+            cand = db.scalar(select(Candidate).where(Candidate.phone == clean_phone))
+        if not cand and c_email:
+            cand = db.scalar(select(Candidate).where(Candidate.email == c_email))
+
+        if not cand and c_name:
+            cand = Candidate(
+                name=c_name,
+                phone=clean_phone or c_phone,
+                email=c_email if c_email else None,
+                current_company=c_company if c_company else None,
+                current_role=c_role if c_role else None,
+            )
+            db.add(cand)
+            db.flush()
+
+        # Requisition ID: use Candidate table id
+        if cand and not candidate_input.get("requisition_id"):
+            candidate_input["requisition_id"] = str(cand.id)
+
+        # Job & JobCandidate for interview schedule
+        jc = None
+        if cand:
+            job = db.scalar(select(Job).where(Job.title == (c_role or "General Position")).limit(1))
+            if not job:
+                user = db.scalar(select(User).limit(1))
+                job = Job(
+                    title=c_role or "General Position",
+                    status="ACTIVE",
+                    created_by=user.id if user else None,
+                )
+                db.add(job)
+                db.flush()
+
+            jc = db.scalar(
+                select(JobCandidate).where(
+                    JobCandidate.job_id == job.id,
+                    JobCandidate.candidate_id == cand.id,
+                )
+            )
+            if not jc:
+                jc = JobCandidate(
+                    job_id=job.id,
+                    candidate_id=cand.id,
+                    is_shortlisted=True,
+                    recruitment_status="INTERVIEW_SCHEDULED",
+                )
+                db.add(jc)
+                db.flush()
+
+            if c_date and c_time:
+                try:
+                    dt = parse_interview_datetime(c_date, c_time)
+                    jc.interview_scheduled_at = dt
+                    jc.recruitment_status = "INTERVIEW_SCHEDULED"
+                except Exception:
+                    pass
+
+            db.commit()
+
+            # Request ID: interview scheduled record stored in database
+            if not candidate_input.get("request_id"):
+                candidate_input["request_id"] = str(jc.id)
+
+            jc.request_id = str(candidate_input["request_id"])
+            jc.requisition_id = str(candidate_input.get("requisition_id") or cand.id)
+            db.commit()
+
+        res = add_candidate(candidate_input)
+
+        reg_url = res.get("registrationUrl")
+        if jc and reg_url:
+            jc.interview_link = reg_url
+            jc.registration_url = reg_url
+            db.commit()
+
+        return {
+            "success": True,
+            "message": "Candidate created and interview scheduled successfully.",
+            "registrationUrl": res.get("registrationUrl"),
+            "data": res,
+        }
+    except Exception as exc:
+        db.rollback()
+        _handle_gateway_exception(exc)
     try:
         # Strictly ensure 'automate' key is never forwarded to add-candidate gateway API
         candidate_input.pop("automate", None)
