@@ -1469,7 +1469,7 @@ def _classify_whatsapp_response(message: str) -> str:
     text_value = (message or "").strip().lower()
 
     negative_patterns = [
-        r"\b\b",
+        r"\bnot interested\b",
         r"\bno thanks\b",
         r"\bdo not want\b",
         r"\bdon't want\b",
