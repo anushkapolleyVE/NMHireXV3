@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from sqlalchemy import select, func
+from sqlalchemy import or_, select, func
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -1204,50 +1204,235 @@ def _send_whatsapp_cta_message(
     )
 
 
-def _candidate_has_contact_history(
-    db: Session,
-    job_candidate_id: UUID,
-) -> bool:
-    """Check if all outreach/interview messages (including the test URL) have been sent to this candidate.
+CONTACTED_RECRUITMENT_STATUSES = {
+    "CONTACTED",
+    "INTERESTED",
+    "INTERVIEW_LINK_SENT",
+    "INTERVIEW_SCHEDULED",
+    "INTERVIEW",
+    "INTERVIEW_COMPLETED",
+    "COMPLETED",
+    "NOT_INTERESTED",
+    "SKIPPED",
+    "INVALID_PHONE",
+    "SKIPPED_INVALID_PHONE",
+    "FAILED",
+}
 
-    A candidate is only considered 'already contacted' (SKIPPED_ALREADY_CONTACTED)
-    once the full outreach-to-booking message flow is complete — specifically when
-    the interview is completed or scheduled and the WhatsApp confirmation message
-    containing the test/interview link has been successfully sent.
+
+def _phone_lookup_variants(
+    raw_phone: str | None = None,
+    clean_phone: str | None = None,
+) -> list[str]:
+    """Build normalized and raw phone variants for database candidate matching.
+
+    Parameters:
+        raw_phone (str | None): Unformatted phone string from input or DB.
+        clean_phone (str | None): Validated 12-digit E.164 Indian mobile number.
+
+    Returns:
+        list[str]: Deduplicated non-empty phone strings for SQL `IN` lookups.
+    """
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def _add(val: str | None) -> None:
+        s = (val or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            variants.append(s)
+
+    _add(clean_phone)
+    _add(raw_phone)
+
+    if clean_phone and clean_phone.startswith("91") and len(clean_phone) == 12:
+        local_10 = clean_phone[2:]
+        _add(local_10)
+        _add(f"+{clean_phone}")
+        _add(f"+91 {local_10}")
+
+    if raw_phone:
+        digits = "".join(filter(str.isdigit, str(raw_phone)))
+        _add(digits)
+
+    return variants
+
+
+def _find_matching_candidates(
+    db: Session,
+    raw_phone: str | None = None,
+    clean_phone: str | None = None,
+    email: str | None = None,
+) -> list[Candidate]:
+    """Query the database for existing Candidate records matching phone OR email.
+
+    Enforces single-candidate identity resolution across phone variants and
+    case-insensitive trimmed email addresses.
 
     Parameters:
         db (Session): Active SQLAlchemy database session.
-        job_candidate_id (UUID): JobCandidate identifier.
+        raw_phone (str | None): Raw phone input string.
+        clean_phone (str | None): Normalized 12-digit phone string.
+        email (str | None): Candidate email address.
 
     Returns:
-        bool: True if all messages through the test URL confirmation have been sent, False otherwise.
+        list[Candidate]: All matching Candidate ORM rows ordered with phone matches first.
     """
-    job_candidate = db.get(JobCandidate, job_candidate_id)
-    if not job_candidate:
+    phone_variants = _phone_lookup_variants(raw_phone, clean_phone)
+    clean_email = email.strip().lower() if email and email.strip() else None
+
+    conditions = []
+    if phone_variants:
+        conditions.append(Candidate.phone.in_(phone_variants))
+    if clean_email:
+        conditions.append(func.lower(func.trim(Candidate.email)) == clean_email)
+
+    if not conditions:
+        return []
+
+    matches = list(db.scalars(select(Candidate).where(or_(*conditions))).all())
+    if len(matches) <= 1 or not phone_variants:
+        return matches
+
+    phone_set = set(phone_variants)
+    matches.sort(key=lambda c: 0 if (c.phone or "").strip() in phone_set else 1)
+    return matches
+
+
+def _candidates_have_contact_history(
+    db: Session,
+    candidate_ids: list[UUID],
+) -> bool:
+    """Check database whether any matching candidate has prior outreach/contact history.
+
+    A candidate is considered already contacted across ALL jobs/roles if any linked
+    `JobCandidate` has:
+    1. Any row in `candidate_contacts` (including valid DELIVERED/SENT/READ, FAILED,
+       INVALID_PHONE, or RECEIVED), OR
+    2. A `recruitment_status` indicating an outreach attempt or post-outreach stage
+       (excludes only NEW, SHORTLISTED, and PENDING_OUTREACH).
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        candidate_ids (list[UUID]): Candidate UUIDs matched by phone or email.
+
+    Returns:
+        bool: True if any prior contact/outreach attempt exists in DB, False otherwise.
+    """
+    if not candidate_ids:
         return False
 
-    status = (job_candidate.recruitment_status or "").strip().upper()
-    if status in {"INTERVIEW_COMPLETED", "COMPLETED"}:
+    has_contact_row = db.scalar(
+        select(CandidateContact.id)
+        .join(JobCandidate, JobCandidate.id == CandidateContact.job_candidate_id)
+        .where(JobCandidate.candidate_id.in_(candidate_ids))
+        .limit(1)
+    ) is not None
+    if has_contact_row:
         return True
 
-    if status != "INTERVIEW_SCHEDULED":
-        return False
-
-    return db.scalar(
-        select(CandidateContact.id)
+    has_contacted_status = db.scalar(
+        select(JobCandidate.id)
         .where(
-            CandidateContact.job_candidate_id == job_candidate_id,
-            CandidateContact.message_type == "OUTBOUND",
-            CandidateContact.status.in_(["SENT", "DELIVERED", "READ"]),
-            (
-                CandidateContact.message.ilike("%Interview Link:%")
-                | CandidateContact.message.ilike("%Teams Link:%")
-                | CandidateContact.message.ilike("%interview has been scheduled%")
-                | CandidateContact.message.ilike("%interview has been rescheduled%")
+            JobCandidate.candidate_id.in_(candidate_ids),
+            func.upper(func.trim(JobCandidate.recruitment_status)).in_(
+                CONTACTED_RECRUITMENT_STATUSES
             ),
         )
         .limit(1)
     ) is not None
+    return has_contacted_status
+
+
+def _candidate_has_contact_history(
+    db: Session,
+    candidate_id: UUID,
+) -> bool:
+    """Check database globally whether a candidate (by ID, phone, or email) was contacted.
+
+    Resolves all Candidate records sharing the same phone variants or email address
+    and verifies whether any prior contact attempt (valid, failed, or invalid phone)
+    exists across all jobs.
+
+    Parameters:
+        db (Session): Active SQLAlchemy database session.
+        candidate_id (UUID): Candidate identifier.
+
+    Returns:
+        bool: True if the candidate has prior contact history in DB, False otherwise.
+    """
+    candidate = db.get(Candidate, candidate_id)
+    if not candidate:
+        return False
+
+    clean_phone = _clean_whatsapp_phone(candidate.phone)
+    matching_candidates = _find_matching_candidates(
+        db,
+        raw_phone=candidate.phone,
+        clean_phone=clean_phone,
+        email=candidate.email,
+    )
+    candidate_ids = list({candidate.id, *(c.id for c in matching_candidates)})
+    return _candidates_have_contact_history(db, candidate_ids)
+
+
+def _record_invalid_phone_contact(
+    db: Session,
+    job_candidate: JobCandidate,
+) -> None:
+    """Mark a JobCandidate as SKIPPED and log an INVALID_PHONE contact attempt in DB."""
+    job_candidate.recruitment_status = "SKIPPED"
+    db.add(
+        CandidateContact(
+            job_candidate_id=job_candidate.id,
+            channel="WHATSAPP",
+            message_type="OUTBOUND",
+            message="Skipped: Invalid phone number (<10 digits or incomplete)",
+            provider="NMVE",
+            status="INVALID_PHONE",
+            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
+        )
+    )
+    db.commit()
+
+
+def _upsert_candidate(
+    db: Session,
+    existing: Candidate | None,
+    *,
+    name: str,
+    phone: str,
+    role: str,
+    email: str = "",
+    company: str = "",
+    parsed_exp: Decimal | None = None,
+) -> Candidate:
+    """Return existing Candidate enriched with missing fields, or create a new one."""
+    if existing is None:
+        candidate = Candidate(
+            name=name,
+            phone=phone,
+            current_role=role,
+            email=email if email else None,
+            current_company=company if company else None,
+            total_experience_years=parsed_exp,
+        )
+        db.add(candidate)
+        db.flush()
+        return candidate
+
+    if phone and not existing.phone:
+        existing.phone = phone
+    if email and not existing.email:
+        existing.email = email
+    if company and not existing.current_company:
+        existing.current_company = company
+    if role and not existing.current_role:
+        existing.current_role = role
+    if parsed_exp is not None and existing.total_experience_years is None:
+        existing.total_experience_years = parsed_exp
+    db.flush()
+    return existing
 
 
 def _classify_whatsapp_response(message: str) -> str:
@@ -2432,23 +2617,62 @@ def send_naukri_outreach_array(
             or ""
         ).strip()
         serial_no = item.get("no", idx + 1)
-        if not raw_phone and item.get("no"):
-            no_val = str(item.get("no")).strip()
+        if not raw_phone and item.get("no") is not None:
+            raw_no = item.get("no")
+            no_val = str(raw_no).strip()
             digits = "".join(filter(str.isdigit, no_val))
-            if len(digits) >= 6:
+            if (isinstance(raw_no, str) and no_val) or len(digits) >= 4:
                 raw_phone = no_val
                 serial_no = idx + 1
 
-        if not name or not raw_phone:
+        if not raw_phone and not email:
             results.append({
                 "no": serial_no,
                 "name": name,
                 "phone": raw_phone,
                 "status": "SKIPPED_MISSING_FIELDS",
-                
             })
             skipped_count += 1
             continue
+
+        # ----------------------------------------------------------------
+        # Database-only global check by phone OR email (valid / failed / invalid)
+        # ----------------------------------------------------------------
+        clean_phone = _clean_whatsapp_phone(raw_phone)
+        matching_candidates = _find_matching_candidates(
+            db,
+            raw_phone=raw_phone,
+            clean_phone=clean_phone,
+            email=email,
+        )
+        primary_match = matching_candidates[0] if matching_candidates else None
+
+        if matching_candidates and _candidates_have_contact_history(
+            db,
+            [c.id for c in matching_candidates],
+        ):
+            results.append({
+                "no": serial_no,
+                "name": name or (primary_match.name if primary_match else ""),
+                "phone": clean_phone or raw_phone or (primary_match.phone if primary_match else ""),
+                "status": "SKIPPED_ALREADY_CONTACTED",
+                "candidate_id": str(primary_match.id),
+            })
+            skipped_count += 1
+            continue
+
+        effective_raw_phone = raw_phone or (primary_match.phone if primary_match and primary_match.phone else "")
+        if not name or not effective_raw_phone:
+            results.append({
+                "no": serial_no,
+                "name": name,
+                "phone": effective_raw_phone,
+                "status": "SKIPPED_MISSING_FIELDS",
+            })
+            skipped_count += 1
+            continue
+
+        clean_phone = _clean_whatsapp_phone(effective_raw_phone)
 
         # ----------------------------------------------------------------
         # Find or create Job for this candidate if job_id was not provided
@@ -2483,23 +2707,18 @@ def send_naukri_outreach_array(
                 db.flush()
             current_job_id = role_job.id
 
-        clean_phone = _clean_whatsapp_phone(raw_phone)
         if not clean_phone:
             # Persist candidate so they appear in Dashboard with Invalid Phone / Skipped status
-            cand_skipped = db.scalar(
-                select(Candidate).where(Candidate.phone == raw_phone)
+            cand_skipped = _upsert_candidate(
+                db,
+                primary_match,
+                name=name,
+                phone=effective_raw_phone,
+                role=role,
+                email=email,
+                company=company,
+                parsed_exp=parsed_exp,
             )
-            if cand_skipped is None:
-                cand_skipped = Candidate(
-                    name=name,
-                    phone=raw_phone,
-                    current_role=role,
-                    email=email if email else None,
-                    current_company=company if company else None,
-                    total_experience_years=parsed_exp,
-                )
-                db.add(cand_skipped)
-                db.flush()
 
             jc_skipped = db.scalar(
                 select(JobCandidate).where(
@@ -2516,25 +2735,13 @@ def send_naukri_outreach_array(
                 )
                 db.add(jc_skipped)
                 db.flush()
-            else:
-                jc_skipped.recruitment_status = "SKIPPED"
 
-            skipped_contact = CandidateContact(
-                job_candidate_id=jc_skipped.id,
-                channel="WHATSAPP",
-                message_type="OUTBOUND",
-                message="Skipped: Invalid phone number (<10 digits or incomplete)",
-                provider="NMVE",
-                status="INVALID_PHONE",
-                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
-            )
-            db.add(skipped_contact)
-            db.commit()
+            _record_invalid_phone_contact(db, jc_skipped)
 
             results.append({
                 "no": serial_no,
                 "name": name,
-                "phone": raw_phone,
+                "phone": effective_raw_phone,
                 "status": "SKIPPED_INVALID_PHONE",
                 "candidate_id": str(cand_skipped.id),
                 "job_candidate_id": str(jc_skipped.id),
@@ -2544,38 +2751,18 @@ def send_naukri_outreach_array(
 
 
         # ----------------------------------------------------------------
-        # Find or create Candidate (matched by cleaned phone number)
+        # Find or create Candidate (matched by phone or email; only 1 record)
         # ----------------------------------------------------------------
-        candidate = db.scalar(
-            select(Candidate).where(Candidate.phone == clean_phone)
+        candidate = _upsert_candidate(
+            db,
+            primary_match,
+            name=name,
+            phone=clean_phone,
+            role=role,
+            email=email,
+            company=company,
+            parsed_exp=parsed_exp,
         )
-        if candidate is None:
-            # Also try original phone format
-            candidate = db.scalar(
-                select(Candidate).where(Candidate.phone == raw_phone)
-            )
-
-        if candidate is None:
-            candidate = Candidate(
-                name=name,
-                phone=clean_phone,
-                current_role=role,
-                email=email if email else None,
-                current_company=company if company else None,
-                total_experience_years=parsed_exp,
-            )
-            db.add(candidate)
-            db.flush()
-        else:
-            if email and not candidate.email:
-                candidate.email = email
-            if company and not candidate.current_company:
-                candidate.current_company = company
-            if role and not candidate.current_role:
-                candidate.current_role = role
-            if parsed_exp is not None and candidate.total_experience_years is None:
-                candidate.total_experience_years = parsed_exp
-            db.flush()
 
         # ----------------------------------------------------------------
         # Find or create JobCandidate
@@ -2595,23 +2782,6 @@ def send_naukri_outreach_array(
             )
             db.add(job_candidate)
             db.flush()
-
-
-        # ----------------------------------------------------------------
-        # Skip if already contacted (avoid duplicate sends)
-        # ----------------------------------------------------------------
-        already_contacted = _candidate_has_contact_history(db, job_candidate.id)
-        if already_contacted:
-            results.append({
-                "no": serial_no,
-                "name": name,
-                "phone": clean_phone,
-                "status": "SKIPPED_ALREADY_CONTACTED",
-                "candidate_id": str(candidate.id),
-                "job_candidate_id": str(job_candidate.id),
-            })
-            skipped_count += 1
-            continue
 
         # ----------------------------------------------------------------
         # Check automation setting ('automate': 'yes' | 'no')
@@ -2772,8 +2942,8 @@ def get_pending_outreach_candidates(
             continue
         seen.add(jc.id)
 
-        # Confirm no outbound contact has been made
-        has_outbound = _candidate_has_contact_history(db, jc.id)
+        # Confirm no outbound contact has been made globally (by ID, phone, or email)
+        has_outbound = _candidate_has_contact_history(db, candidate.id)
         if has_outbound:
             continue
 
@@ -2859,8 +3029,8 @@ def send_pending_outreach_candidates(
 
         job = db.get(Job, jc.job_id) if jc.job_id else None
 
-        # Check if already contacted
-        if _candidate_has_contact_history(db, jc.id):
+        # Check if already contacted globally (by candidate ID, phone, or email)
+        if _candidate_has_contact_history(db, candidate.id):
             results.append({
                 "job_candidate_id": str(jc.id),
                 "name": candidate.name,
@@ -2872,6 +3042,7 @@ def send_pending_outreach_candidates(
 
         clean_phone = _clean_whatsapp_phone(candidate.phone)
         if not clean_phone:
+            _record_invalid_phone_contact(db, jc)
             results.append({
                 "job_candidate_id": str(jc.id),
                 "name": candidate.name,
