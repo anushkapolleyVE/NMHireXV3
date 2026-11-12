@@ -181,6 +181,12 @@ class Candidate(Base):
         String(255),
         doc="Candidate's current job title or designation."
     )
+    requisition_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        doc="External requisition ID associated with the candidate from outreach input."
+    )
     notice_period_days: Mapped[int | None] = mapped_column(
         Integer,
         doc="Official notice period in calendar days."

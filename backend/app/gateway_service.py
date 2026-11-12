@@ -494,10 +494,9 @@ def add_candidate(
         req_str = str(requisition_id_input).strip()
         try:
             parsed_id = int(req_str)
-            if parsed_id > 0:
-                requisition_id_val = parsed_id
+            requisition_id_val = parsed_id if parsed_id > 0 else req_str
         except (ValueError, TypeError):
-            requisition_id_val = None
+            requisition_id_val = req_str
 
     if requisition_id_val is None:
         requisition_id_val = int(getattr(settings, "NMHIREX_DEFAULT_REQUISITION_ID", 506))

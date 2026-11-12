@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .api import router
 from .database import engine
@@ -13,6 +14,17 @@ async def lifespan(app: FastAPI):
     # Create missing tables for a fresh development database.
     # Existing tables/columns are NOT altered by create_all().
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS requisition_id VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_candidates_requisition_id ON candidates (requisition_id)"
+            )
+        )
     
     import asyncio
     from .scheduler import check_interview_reminders

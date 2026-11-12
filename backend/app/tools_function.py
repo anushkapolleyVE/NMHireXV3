@@ -1406,6 +1406,7 @@ def _upsert_candidate(
     email: str = "",
     company: str = "",
     parsed_exp: Decimal | None = None,
+    requisition_id: str = "",
 ) -> Candidate:
     """Return existing Candidate enriched with missing fields, or create a new one."""
     if existing is None:
@@ -1416,6 +1417,7 @@ def _upsert_candidate(
             email=email if email else None,
             current_company=company if company else None,
             total_experience_years=parsed_exp,
+            requisition_id=requisition_id if requisition_id else None,
         )
         db.add(candidate)
         db.flush()
@@ -1431,6 +1433,8 @@ def _upsert_candidate(
         existing.current_role = role
     if parsed_exp is not None and existing.total_experience_years is None:
         existing.total_experience_years = parsed_exp
+    if requisition_id:
+        existing.requisition_id = requisition_id
     db.flush()
     return existing
 
@@ -2598,19 +2602,21 @@ def send_naukri_outreach_array(
         name = str(item.get("user_name") or item.get("name") or "").strip()
         email = str(item.get("email") or "").strip()
         company = str(item.get("current_company") or item.get("company") or "").strip()
-        role = str(item.get("job_role") or item.get("role") or (job.title if job else "the position")).strip()
+        role = str(item.get("job_role") or item.get("role") or (job.title if job else "")).strip()
+        requisition_id = str(item.get("requisition_id") or (job.requisition_id if job and job.requisition_id else "") or "").strip()
         raw_exp = item.get("experience") or item.get("total_experience_years")
         parsed_exp = None
         if raw_exp is not None and str(raw_exp).strip() != "":
             try:
-
                 parsed_exp = Decimal(str(raw_exp).strip())
             except Exception:
                 parsed_exp = None
-        
-        # Phone can be provided as phone, phone_number, mobile, or in the 'no' field
+
+        # Phone can be provided as phone_no, "phone no", contact_no, phone, phone_number, mobile, or legacy 'no'
         raw_phone = str(
-            item.get("contact_no")
+            item.get("phone_no")
+            or item.get("phone no")
+            or item.get("contact_no")
             or item.get("phone")
             or item.get("phone_number")
             or item.get("mobile")
@@ -2625,12 +2631,28 @@ def send_naukri_outreach_array(
                 raw_phone = no_val
                 serial_no = idx + 1
 
-        if not raw_phone and not email:
+        missing_fields = []
+        if not name:
+            missing_fields.append("user_name")
+        if not email:
+            missing_fields.append("email")
+        if not raw_phone:
+            missing_fields.append("phone_no")
+        if not company:
+            missing_fields.append("current_company")
+        if not role:
+            missing_fields.append("job_role")
+        if not requisition_id:
+            missing_fields.append("requisition_id")
+
+        if missing_fields:
             results.append({
                 "no": serial_no,
                 "name": name,
                 "phone": raw_phone,
                 "status": "SKIPPED_MISSING_FIELDS",
+                "missing_fields": missing_fields,
+                "error": f"Missing mandatory fields: {', '.join(missing_fields)}",
             })
             skipped_count += 1
             continue
@@ -2662,16 +2684,6 @@ def send_naukri_outreach_array(
             continue
 
         effective_raw_phone = raw_phone or (primary_match.phone if primary_match and primary_match.phone else "")
-        if not name or not effective_raw_phone:
-            results.append({
-                "no": serial_no,
-                "name": name,
-                "phone": effective_raw_phone,
-                "status": "SKIPPED_MISSING_FIELDS",
-            })
-            skipped_count += 1
-            continue
-
         clean_phone = _clean_whatsapp_phone(effective_raw_phone)
 
         # ----------------------------------------------------------------
@@ -2718,6 +2730,7 @@ def send_naukri_outreach_array(
                 email=email,
                 company=company,
                 parsed_exp=parsed_exp,
+                requisition_id=requisition_id,
             )
 
             jc_skipped = db.scalar(
@@ -2732,9 +2745,12 @@ def send_naukri_outreach_array(
                     candidate_id=cand_skipped.id,
                     is_shortlisted=True,
                     recruitment_status="SKIPPED",
+                    requisition_id=requisition_id,
                 )
                 db.add(jc_skipped)
                 db.flush()
+            elif requisition_id and not jc_skipped.requisition_id:
+                jc_skipped.requisition_id = requisition_id
 
             _record_invalid_phone_contact(db, jc_skipped)
 
@@ -2762,6 +2778,7 @@ def send_naukri_outreach_array(
             email=email,
             company=company,
             parsed_exp=parsed_exp,
+            requisition_id=requisition_id,
         )
 
         # ----------------------------------------------------------------
@@ -2779,9 +2796,12 @@ def send_naukri_outreach_array(
                 candidate_id=candidate.id,
                 is_shortlisted=True,
                 recruitment_status="NEW",
+                requisition_id=requisition_id,
             )
             db.add(job_candidate)
             db.flush()
+        elif requisition_id:
+            job_candidate.requisition_id = requisition_id
 
         # ----------------------------------------------------------------
         # Check automation setting ('automate': 'yes' | 'no')
@@ -2957,7 +2977,7 @@ def get_pending_outreach_candidates(
             "company": candidate.current_company or "",
             "role": candidate.current_role or (job.title if job else "Software Engineer"),
             "experience": float(candidate.total_experience_years) if candidate.total_experience_years is not None else None,
-            "requisition_id": jc.requisition_id or (str(job.requisition_id) if job and job.requisition_id else None),
+            "requisition_id": jc.requisition_id or candidate.requisition_id or (str(job.requisition_id) if job and job.requisition_id else None),
             "status": jc.recruitment_status,
             "created_at": jc.created_at.isoformat() if jc.created_at else None,
         })

@@ -16,23 +16,25 @@ const STATUS_META = {
 
 // Exact schema reflecting /api/outreach/send-array
 const EMPTY_ROW = {
-  name: '',
-  role: '',
-  no: '',
+  user_name: '',
   email: '',
-  company: '',
+  phone_no: '',
+  current_company: '',
+  job_role: '',
   experience: '',
+  requisition_id: '',
   automate: 'yes',
 };
 
 const DEFAULT_ROWS = [
   {
-    name: 'Rahul Sharma',
-    role: 'Software Engineer',
-    no: '917439717970',
+    user_name: 'Rahul Sharma',
     email: 'rahul@example.com',
-    company: 'Acme Corp',
+    phone_no: '917439717970',
+    current_company: 'Acme Corp',
+    job_role: 'Software Engineer',
     experience: 5,
+    requisition_id: '506',
     automate: 'yes',
   },
 ];
@@ -79,17 +81,23 @@ export default function OutreachSend() {
   };
 
   const switchToJsonMode = () => {
-    const list = rows.map(r => ({
-      name: r.name || '',
-      role: r.role || '',
-      no: r.no || '',
-      email: r.email || '',
-      company: r.company || companyName || '',
-      experience: r.experience !== '' && r.experience !== undefined
-        ? (!isNaN(Number(r.experience)) ? Number(r.experience) : r.experience)
-        : '',
-      automate: r.automate || automate || 'yes',
-    }));
+    const list = rows.map(r => {
+      const obj = {
+        user_name: r.user_name || '',
+        email: r.email || '',
+        phone_no: r.phone_no || '',
+        current_company: r.current_company || companyName || '',
+        job_role: r.job_role || '',
+      };
+      if (r.experience !== '' && r.experience !== undefined && r.experience !== null) {
+        obj.experience = !isNaN(Number(r.experience)) ? Number(r.experience) : r.experience;
+      } else {
+        obj.experience = '';
+      }
+      obj.requisition_id = r.requisition_id || '';
+      obj.automate = r.automate || automate || 'yes';
+      return obj;
+    });
     setJsonText(JSON.stringify(list, null, 2));
     setJsonMode(true);
     setJsonError('');
@@ -108,21 +116,29 @@ export default function OutreachSend() {
       }
 
       const mapped = list.map((item) => {
-        const phoneVal = item.no !== undefined && item.no !== null
-          ? String(item.no)
-          : (item.phone || item.contact_no || item.mobile || '');
+        const rawPhoneVal =
+          item.phone_no ??
+          item['phone no'] ??
+          item.contact_no ??
+          item.phone ??
+          item.mobile ??
+          item.no;
+        const phoneVal = rawPhoneVal !== undefined && rawPhoneVal !== null ? String(rawPhoneVal) : '';
         const autoVal = item.automate !== undefined && item.automate !== null
           ? (String(item.automate).trim().toLowerCase() === 'no' ? 'no' : 'yes')
           : (automate || 'yes');
         return {
-          name: item.name || item.user_name || '',
-          role: item.role || item.job_role || '',
-          no: phoneVal,
+          user_name: item.user_name || item.name || '',
           email: item.email || '',
-          company: item.company || item.current_company || '',
-          experience: item.experience !== undefined
+          phone_no: phoneVal,
+          current_company: item.current_company || item.company || '',
+          job_role: item.job_role || item.role || '',
+          experience: item.experience !== undefined && item.experience !== null
             ? item.experience
-            : (item.total_experience_years !== undefined ? item.total_experience_years : ''),
+            : (item.total_experience_years !== undefined && item.total_experience_years !== null ? item.total_experience_years : ''),
+          requisition_id: item.requisition_id !== undefined && item.requisition_id !== null
+            ? String(item.requisition_id)
+            : '',
           automate: autoVal,
         };
       });
@@ -138,30 +154,48 @@ export default function OutreachSend() {
     setError('');
     setResult(null);
 
-    const candidates = rows
-      .filter(r => (r.name || '').trim() && (String(r.no || '').trim() || String(r.phone || '').trim()))
-      .map(r => {
-        const phoneNo = String(r.no || r.phone || '').trim();
-        const cand = {
-          name: r.name.trim(),
-          role: r.role.trim() || 'Software Engineer',
-          no: phoneNo,
-          phone: phoneNo,
-          email: (r.email || '').trim(),
-          company: (r.company || companyName || '').trim(),
-          automate: r.automate || automate || 'yes',
-        };
-        if (r.experience !== '' && r.experience !== undefined && r.experience !== null) {
-          const parsedExp = Number(r.experience);
-          cand.experience = !isNaN(parsedExp) ? parsedExp : r.experience;
-        }
-        return cand;
-      });
+    const activeRows = rows.filter(r =>
+      [r.user_name, r.email, r.phone_no, r.current_company, r.job_role, r.requisition_id]
+        .some(v => String(v || '').trim() !== '')
+    );
 
-    if (candidates.length === 0) {
-      setError('Please add at least one candidate with a name and phone / no.');
+    if (activeRows.length === 0) {
+      setError('Please add at least one candidate with all mandatory fields filled.');
       return;
     }
+
+    for (let i = 0; i < activeRows.length; i += 1) {
+      const r = activeRows[i];
+      const companyVal = String(r.current_company || companyName || '').trim();
+      const missing = [];
+      if (!String(r.user_name || '').trim()) missing.push('user_name');
+      if (!String(r.email || '').trim()) missing.push('email');
+      if (!String(r.phone_no || '').trim()) missing.push('phone_no');
+      if (!companyVal) missing.push('current_company');
+      if (!String(r.job_role || '').trim()) missing.push('job_role');
+      if (!String(r.requisition_id || '').trim()) missing.push('requisition_id');
+      if (missing.length > 0) {
+        setError(`Row ${i + 1} is missing mandatory fields: ${missing.join(', ')}`);
+        return;
+      }
+    }
+
+    const candidates = activeRows.map(r => {
+      const cand = {
+        user_name: String(r.user_name || '').trim(),
+        email: String(r.email || '').trim(),
+        phone_no: String(r.phone_no || '').trim(),
+        current_company: String(r.current_company || companyName || '').trim(),
+        job_role: String(r.job_role || '').trim(),
+        requisition_id: String(r.requisition_id || '').trim(),
+        automate: r.automate || automate || 'yes',
+      };
+      if (r.experience !== '' && r.experience !== undefined && r.experience !== null) {
+        const parsedExp = Number(r.experience);
+        cand.experience = !isNaN(parsedExp) ? parsedExp : String(r.experience).trim();
+      }
+      return cand;
+    });
 
     setSending(true);
     try {
@@ -325,7 +359,7 @@ export default function OutreachSend() {
                 Candidate Input Array ({rows.length})
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Fields: <code className="text-brand">name</code>, <code className="text-brand">role</code>, <code className="text-brand">no</code>, <code className="text-brand">email</code>, <code className="text-brand">company</code>, <code className="text-brand">experience</code>, <code className="text-brand">automate</code>
+                Fields: <code className="text-brand">user_name</code>*, <code className="text-brand">email</code>*, <code className="text-brand">phone_no</code>*, <code className="text-brand">current_company</code>*, <code className="text-brand">job_role</code>*, <code className="text-brand">experience</code> (optional), <code className="text-brand">requisition_id</code>*, <code className="text-brand">automate</code>
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -357,12 +391,13 @@ export default function OutreachSend() {
                 <thead>
                   <tr className="text-xs font-bold uppercase tracking-widest text-slate-500 border-b border-slate-800">
                     <th className="px-3 py-3 text-left w-10">#</th>
-                    <th className="px-3 py-3 text-left min-w-[140px]">name *</th>
-                    <th className="px-3 py-3 text-left min-w-[130px]">role</th>
-                    <th className="px-3 py-3 text-left min-w-[130px]">no (phone) *</th>
-                    <th className="px-3 py-3 text-left min-w-[150px]">email</th>
-                    <th className="px-3 py-3 text-left min-w-[130px]">company</th>
+                    <th className="px-3 py-3 text-left min-w-[140px]">user_name *</th>
+                    <th className="px-3 py-3 text-left min-w-[160px]">email *</th>
+                    <th className="px-3 py-3 text-left min-w-[130px]">phone no *</th>
+                    <th className="px-3 py-3 text-left min-w-[140px]">current_company *</th>
+                    <th className="px-3 py-3 text-left min-w-[140px]">job_role *</th>
                     <th className="px-3 py-3 text-left w-24">experience</th>
+                    <th className="px-3 py-3 text-left min-w-[120px]">requisition_id *</th>
                     <th className="px-3 py-3 text-left w-28">automate</th>
                     <th className="px-3 py-3 w-8" />
                   </tr>
@@ -372,36 +407,14 @@ export default function OutreachSend() {
                     <tr key={idx} className="hover:bg-slate-800/30 transition-colors group">
                       <td className="px-3 py-2 text-slate-500 font-mono text-xs">{idx + 1}</td>
 
-                      {/* name */}
+                      {/* user_name */}
                       <td className="px-3 py-2">
                         <input
                           type="text"
-                          value={row.name}
-                          onChange={e => updateRow(idx, 'name', e.target.value)}
+                          value={row.user_name}
+                          onChange={e => updateRow(idx, 'user_name', e.target.value)}
                           placeholder="Rahul Sharma"
                           className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm"
-                        />
-                      </td>
-
-                      {/* role */}
-                      <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          value={row.role}
-                          onChange={e => updateRow(idx, 'role', e.target.value)}
-                          placeholder="Software Engineer"
-                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm"
-                        />
-                      </td>
-
-                      {/* no (phone) */}
-                      <td className="px-3 py-2">
-                        <input
-                          type="tel"
-                          value={row.no}
-                          onChange={e => updateRow(idx, 'no', e.target.value)}
-                          placeholder="917439717970"
-                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm"
                         />
                       </td>
 
@@ -416,18 +429,40 @@ export default function OutreachSend() {
                         />
                       </td>
 
-                      {/* company */}
+                      {/* phone_no */}
+                      <td className="px-3 py-2">
+                        <input
+                          type="tel"
+                          value={row.phone_no}
+                          onChange={e => updateRow(idx, 'phone_no', e.target.value)}
+                          placeholder="917439717970"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm"
+                        />
+                      </td>
+
+                      {/* current_company */}
                       <td className="px-3 py-2">
                         <input
                           type="text"
-                          value={row.company || ''}
-                          onChange={e => updateRow(idx, 'company', e.target.value)}
+                          value={row.current_company || ''}
+                          onChange={e => updateRow(idx, 'current_company', e.target.value)}
                           placeholder="Acme Corp"
                           className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm"
                         />
                       </td>
 
-                      {/* experience */}
+                      {/* job_role */}
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={row.job_role}
+                          onChange={e => updateRow(idx, 'job_role', e.target.value)}
+                          placeholder="Software Engineer"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 text-sm"
+                        />
+                      </td>
+
+                      {/* experience (optional) */}
                       <td className="px-3 py-2">
                         <input
                           type="number"
@@ -436,6 +471,17 @@ export default function OutreachSend() {
                           value={row.experience !== undefined ? row.experience : ''}
                           onChange={e => updateRow(idx, 'experience', e.target.value)}
                           placeholder="5"
+                          className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm"
+                        />
+                      </td>
+
+                      {/* requisition_id */}
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={row.requisition_id || ''}
+                          onChange={e => updateRow(idx, 'requisition_id', e.target.value)}
+                          placeholder="506"
                           className="w-full bg-transparent text-white placeholder:text-slate-700 focus:outline-none border-0 font-mono text-sm"
                         />
                       </td>
@@ -499,15 +545,16 @@ export default function OutreachSend() {
                   setJsonText(e.target.value);
                   setJsonError('');
                 }}
-                rows={11}
+                rows={12}
                 placeholder={`[
   {
-    "name": "Rahul Sharma",
-    "role": "Software Engineer",
-    "no": "917439717970",
+    "user_name": "Rahul Sharma",
     "email": "rahul@example.com",
-    "company": "Acme Corp",
+    "phone_no": "917439717970",
+    "current_company": "Acme Corp",
+    "job_role": "Software Engineer",
     "experience": 5,
+    "requisition_id": "506",
     "automate": "yes"
   }
 ]`}
@@ -638,8 +685,9 @@ export default function OutreachSend() {
                       className="flex items-center justify-between px-6 py-4 hover:bg-slate-800/20 transition-colors"
                     >
                       <div>
-                        <p className="font-semibold text-white text-sm">{r.name}</p>
-                        <p className="text-xs text-slate-500 font-mono mt-0.5">{r.phone}</p>
+                        <p className="font-semibold text-white text-sm">{r.name || r.user_name}</p>
+                        <p className="text-xs text-slate-500 font-mono mt-0.5">{r.phone || r.phone_no}</p>
+                        {r.error && <p className="text-xs text-yellow-400 mt-0.5">{r.error}</p>}
                       </div>
                       <span className={`rounded-xl px-3 py-1.5 text-xs font-bold ring-1 ${meta.bg} ${meta.color}`}>
                         {meta.label}

@@ -41,12 +41,14 @@ export default function Dashboard() {
   -H "Content-Type: application/json" \\
   -d '[
     {
-      "name": "Rahul Sharma",
-      "role": "Software Engineer",
-      "no": "917439717970",
+      "user_name": "Rahul Sharma",
       "email": "rahul@example.com",
-      "company": "Acme Corp",
-      "experience": 5
+      "phone_no": "917439717970",
+      "current_company": "Acme Corp",
+      "job_role": "Software Engineer",
+      "experience": 5,
+      "requisition_id": "506",
+      "automate": "yes"
     }
   ]'`;
 
