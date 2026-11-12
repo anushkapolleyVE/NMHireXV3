@@ -55,6 +55,16 @@ WHATSAPP_STAGE_NUMBERS = [
 ]
 
 
+IST_ZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _to_naive_ist(dt: datetime) -> datetime:
+    """Normalize a datetime to naive IST (Asia/Kolkata) wall-clock time."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(IST_ZONE).replace(tzinfo=None)
+    return dt
+
+
 # ============================================================
 # QUERY & DASHBOARD FUNCTIONS
 # ============================================================
@@ -462,7 +472,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
 
             if len(recent_candidates) < 40:
                 scheduled_str = (
-                    jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                    _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                     if jc.interview_scheduled_at
                     else None
                 )
@@ -1923,6 +1933,9 @@ def schedule_candidate_interview(
     if job_candidate.recruitment_status == "NOT_INTERESTED":
         raise ValueError("Candidate is not interested")
 
+    # Always store and format interview_scheduled_at in IST (naive wall-clock time)
+    scheduled_at = _to_naive_ist(scheduled_at)
+
     import uuid
     from .config import settings
     
@@ -2112,7 +2125,7 @@ def get_outreach_candidates(
             "delivery_status": delivery_status,
             "error_message": latest_outbound.message if (latest_outbound and c_status == "FAILED") else None,
             "interview_scheduled_at": (
-                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                 if jc.interview_scheduled_at
                 else None
             ),
@@ -2382,7 +2395,7 @@ def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
             "stage": jc.recruitment_status,
             "interview_link": jc.interview_link or interview_link,
             "interview_scheduled_at": (
-                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                 if jc.interview_scheduled_at
                 else None
             ),
@@ -2767,14 +2780,12 @@ def send_naukri_outreach_array(
         # ----------------------------------------------------------------
         # Find or create JobCandidate
         # ----------------------------------------------------------------
-        job_candidate = target_job_candidate
-        if job_candidate is None:
-            job_candidate = db.scalar(
-                select(JobCandidate).where(
-                    JobCandidate.job_id == current_job_id,
-                    JobCandidate.candidate_id == candidate.id,
-                )
+        job_candidate = db.scalar(
+            select(JobCandidate).where(
+                JobCandidate.job_id == current_job_id,
+                JobCandidate.candidate_id == candidate.id,
             )
+        )
         if job_candidate is None:
             job_candidate = JobCandidate(
                 job_id=current_job_id,
@@ -3042,6 +3053,7 @@ def send_pending_outreach_candidates(
             skipped_count += 1
             continue
 
+        clean_phone = _clean_whatsapp_phone(candidate.phone)
         if not clean_phone:
             _record_invalid_phone_contact(db, jc)
             results.append({

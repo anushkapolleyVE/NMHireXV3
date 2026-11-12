@@ -72,7 +72,7 @@ router = APIRouter(prefix="/api")
 # ============================================================
 class ScheduleInterviewRequest(BaseModel):
     """Payload schema for manually scheduling an interview slot."""
-    scheduled_at: datetime = Field(description="Target interview appointment timestamp in UTC/ISO format.")
+    scheduled_at: datetime = Field(description="Target interview appointment timestamp in IST/ISO format.")
     interview_link: str | None = Field(default=None, description="Optional custom interview URL.")
 
 
@@ -103,7 +103,7 @@ class RescheduleRequest(BaseModel):
     """Payload schema for candidate interview rescheduling requests."""
     new_date: str = Field(description="Selected new calendar date (YYYY-MM-DD).")
     new_time: str = Field(description="Selected new time slot (HH:mm AM/PM).")
-    timezone: str = Field(default="UTC", description="Candidate local timezone identifier.")
+    timezone: str = Field(default="Asia/Kolkata", description="Candidate local timezone identifier.")
 
 
 class NaukriCandidateItem(BaseModel):
@@ -676,8 +676,12 @@ class ScheduleConfirmRequest(BaseModel):
     timezone: str = Field(default="Asia/Kolkata", description="Candidate local timezone identifier.")
 
 
-def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
-    """Robustly parse date and time strings across multiple standard and international formats.
+def parse_interview_datetime(
+    date_str: str,
+    time_str: str,
+    timezone_name: str = "Asia/Kolkata",
+) -> datetime:
+    """Robustly parse date and time strings and return naive IST (Asia/Kolkata) datetime.
 
     Detailed Functionality:
     - Normalizes date and time strings.
@@ -688,19 +692,26 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
       * '%Y-%m-%d %H:%M'
       * '%Y-%m-%d %I %p'
     - Falls back to `dateutil.parser` for any non-standard locale formats.
+    - Converts from the input timezone (default IST) to naive IST wall-clock time so
+      PostgreSQL stores IST directly without shifting to UTC.
 
     Parameters:
         date_str (str): Calendar date string.
         time_str (str): Time string.
+        timezone_name (str): Source IANA timezone name (defaults to 'Asia/Kolkata').
 
     Returns:
-        datetime: Parsed Python datetime object.
+        datetime: Naive Python datetime in IST (Asia/Kolkata).
 
     Raises:
         HTTPException(400): If the format cannot be parsed.
     """
     from zoneinfo import ZoneInfo
     IST = ZoneInfo("Asia/Kolkata")
+    try:
+        src_tz = ZoneInfo(timezone_name or "Asia/Kolkata")
+    except Exception:
+        src_tz = IST
 
     time_clean = time_str.strip().upper()
     combined = f"{date_str.strip()} {time_clean}"
@@ -716,15 +727,16 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
     for fmt in formats:
         try:
             naive_dt = datetime.strptime(combined, fmt)
-            # Attach IST timezone so PostgreSQL stores the correct UTC equivalent
-            return naive_dt.replace(tzinfo=IST)
+            return naive_dt.replace(tzinfo=src_tz).astimezone(IST).replace(tzinfo=None)
         except ValueError:
             pass
 
     try:
         from dateutil import parser
         naive_dt = parser.parse(f"{date_str} {time_str}")
-        return naive_dt.replace(tzinfo=IST)
+        if naive_dt.tzinfo is None:
+            naive_dt = naive_dt.replace(tzinfo=src_tz)
+        return naive_dt.astimezone(IST).replace(tzinfo=None)
     except Exception:
         pass
 
@@ -834,15 +846,11 @@ def api_scheduling_confirm(
     from zoneinfo import ZoneInfo
     from .tools_function import schedule_candidate_interview
     
-    dt = parse_interview_datetime(req.interview_date, req.interview_time)
+    dt = parse_interview_datetime(req.interview_date, req.interview_time, req.timezone)
     
-    # Validate that the selected interview time is in the future
-    try:
-        tz = ZoneInfo(req.timezone or "Asia/Kolkata")
-    except Exception:
-        tz = ZoneInfo("Asia/Kolkata")
-    now_in_tz = datetime.now(tz)
-    if dt <= now_in_tz:
+    # Validate that the selected interview time is in the future (IST wall-clock comparison)
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+    if dt <= now_ist:
         raise HTTPException(
             status_code=400,
             detail="Cannot schedule an interview in the past. Please select a future time slot."
@@ -944,6 +952,7 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
         HTTPException(404): If token is expired or invalid.
     """
     from .models import JobCandidate, Candidate, Job
+    from .tools_function import _to_naive_ist
     jc = db.query(JobCandidate).filter(JobCandidate.reschedule_token == token).first()
     if not jc:
         raise HTTPException(
@@ -960,7 +969,7 @@ def api_get_reschedule_details(token: str, db: Session = Depends(get_db)):
             "candidate_name": candidate.name if candidate else "Candidate",
             "job_title": job.title if job else "Interview",
             "current_scheduled_at": (
-                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                 if jc.interview_scheduled_at
                 else None
             ),
@@ -999,15 +1008,11 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
             detail="This reschedule link has already been used or is expired. Interviews can only be rescheduled once."
         )
         
-    dt = parse_interview_datetime(req.new_date, req.new_time)
+    dt = parse_interview_datetime(req.new_date, req.new_time, req.timezone)
     
-    # Validate that the selected reschedule time is in the future
-    try:
-        tz = ZoneInfo(req.timezone or "Asia/Kolkata")
-    except Exception:
-        tz = ZoneInfo("Asia/Kolkata")
-    now_in_tz = datetime.now(tz)
-    if dt <= now_in_tz:
+    # Validate that the selected reschedule time is in the future (IST wall-clock comparison)
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+    if dt <= now_ist:
         raise HTTPException(
             status_code=400,
             detail="Cannot schedule an interview in the past. Please select a future time slot."

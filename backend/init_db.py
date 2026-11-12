@@ -5,7 +5,7 @@ Run this script whenever you configure a new DATABASE_URL in .env:
 """
 
 import sys
-from app.database import engine
+from app.database import engine, ensure_ist_datetime_columns
 from app.models import Base
 
 def init_database():
@@ -16,6 +16,7 @@ def init_database():
 
     try:
         Base.metadata.create_all(bind=engine)
+        ensure_ist_datetime_columns()
         print("\nAll required tables created successfully in the database!")
     except Exception as e:
         print(f"\nError initializing database: {e}")

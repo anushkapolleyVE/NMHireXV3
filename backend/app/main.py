@@ -4,15 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
-from .database import engine
+from .database import engine, ensure_ist_datetime_columns
 from .models import Base
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create missing tables for a fresh development database.
-    # Existing tables/columns are NOT altered by create_all().
     Base.metadata.create_all(bind=engine)
+    ensure_ist_datetime_columns()
     
     import asyncio
     from .scheduler import check_interview_reminders
