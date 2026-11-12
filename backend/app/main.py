@@ -13,21 +13,19 @@ from .models import Base
 async def lifespan(app: FastAPI):
     # Create missing tables for a fresh development database.
     Base.metadata.create_all(bind=engine)
-<<<<<<< HEAD
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS requisition_id VARCHAR(255)"
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE candidates ADD COLUMN IF NOT EXISTS requisition_id VARCHAR(255)"
+                )
             )
-        )
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_candidates_requisition_id ON candidates (requisition_id)"
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_candidates_requisition_id ON candidates (requisition_id)"
+                )
             )
-        )
-=======
     ensure_ist_datetime_columns()
->>>>>>> 5bf29f0c34204d841d2af0d05f6436ce3d3410d8
     
     import asyncio
     from .scheduler import check_interview_reminders

@@ -46,6 +46,7 @@ from .config import settings
 from .database import get_db
 from .models import Job, JobCandidate, User
 from .tools_function import (
+    _find_matching_candidates,
     get_admin_job_candidates,
     get_admin_jobs,
     get_job_candidates,
@@ -1483,12 +1484,14 @@ def api_post_gateway_add_candidate(
         c_date = str(candidate_input.get("interview_date") or "").strip()
         c_time = str(candidate_input.get("interview_time") or "").strip()
 
-        cand = None
         clean_phone = _clean_whatsapp_phone(c_phone) if c_phone else ""
-        if clean_phone:
-            cand = db.scalar(select(Candidate).where(Candidate.phone == clean_phone))
-        if not cand and c_email:
-            cand = db.scalar(select(Candidate).where(Candidate.email == c_email))
+        matches = _find_matching_candidates(
+            db,
+            raw_phone=c_phone,
+            clean_phone=clean_phone,
+            email=c_email,
+        )
+        cand = matches[0] if matches else None
 
         if not cand and c_name:
             cand = Candidate(
