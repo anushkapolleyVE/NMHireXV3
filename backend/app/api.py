@@ -1123,6 +1123,7 @@ async def api_send_outreach_endpoint(
             or "phone_number" in body
             or "mobile" in body
             or "contact_no" in body
+            or "email" in body
         ):
             candidates_list = [body]
             job_id = body.get("job_id")
