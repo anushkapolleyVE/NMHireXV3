@@ -113,7 +113,7 @@ export default function PendingOutreach() {
     handleSendSelected([jcId]);
   };
 
-  return (
+  return ( 
     <div className="relative min-h-screen w-full overflow-hidden antialiased pb-24">
       <div className="glow-bg top-[-30%] left-[-20%] animate-pulse-slow" />
       <div

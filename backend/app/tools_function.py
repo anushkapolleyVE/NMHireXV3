@@ -1207,21 +1207,43 @@ def _candidate_has_contact_history(
     db: Session,
     job_candidate_id: UUID,
 ) -> bool:
-    """Check if an outbound contact record already exists for this candidate on this job.
+    """Check if all outreach/interview messages (including the test URL) have been sent to this candidate.
 
-    Used as an idempotency guard to prevent duplicate WhatsApp template dispatches.
+    A candidate is only considered 'already contacted' (SKIPPED_ALREADY_CONTACTED)
+    once the full outreach-to-booking message flow is complete — specifically when
+    the interview is completed or scheduled and the WhatsApp confirmation message
+    containing the test/interview link has been successfully sent.
 
     Parameters:
         db (Session): Active SQLAlchemy database session.
         job_candidate_id (UUID): JobCandidate identifier.
 
     Returns:
-        bool: True if at least one contact record exists in `candidate_contacts`, False otherwise.
+        bool: True if all messages through the test URL confirmation have been sent, False otherwise.
     """
+    job_candidate = db.get(JobCandidate, job_candidate_id)
+    if not job_candidate:
+        return False
+
+    status = (job_candidate.recruitment_status or "").strip().upper()
+    if status in {"INTERVIEW_COMPLETED", "COMPLETED"}:
+        return True
+
+    if status != "INTERVIEW_SCHEDULED":
+        return False
+
     return db.scalar(
         select(CandidateContact.id)
         .where(
-            CandidateContact.job_candidate_id == job_candidate_id
+            CandidateContact.job_candidate_id == job_candidate_id,
+            CandidateContact.message_type == "OUTBOUND",
+            CandidateContact.status.in_(["SENT", "DELIVERED", "READ"]),
+            (
+                CandidateContact.message.ilike("%Interview Link:%")
+                | CandidateContact.message.ilike("%Teams Link:%")
+                | CandidateContact.message.ilike("%interview has been scheduled%")
+                | CandidateContact.message.ilike("%interview has been rescheduled%")
+            ),
         )
         .limit(1)
     ) is not None
@@ -2396,6 +2418,7 @@ def send_naukri_outreach_array(
         parsed_exp = None
         if raw_exp is not None and str(raw_exp).strip() != "":
             try:
+
                 parsed_exp = Decimal(str(raw_exp).strip())
             except Exception:
                 parsed_exp = None
@@ -2422,6 +2445,7 @@ def send_naukri_outreach_array(
                 "name": name,
                 "phone": raw_phone,
                 "status": "SKIPPED_MISSING_FIELDS",
+                
             })
             skipped_count += 1
             continue
@@ -2685,7 +2709,7 @@ def send_naukri_outreach_array(
         )
         db.add(contact)
 
-        if job_candidate.recruitment_status in {None, "NEW", "SHORTLISTED"}:
+        if job_candidate.recruitment_status in {None, "NEW", "SHORTLISTED", "PENDING_OUTREACH", "FAILED", "SKIPPED"}:
             job_candidate.recruitment_status = "CONTACTED"
 
         db.commit()

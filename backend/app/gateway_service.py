@@ -37,7 +37,7 @@ def fetch_schedules(
     client: WhatsAppGatewayClient | None = None,
     auto_paginate: bool = True,
 ) -> dict[str, Any]:
-    """Retrieve scheduled interviews from the WhatsApp Integration Gateway.
+    """Retrieve scheduled interviews from the W hatsApp Integration Gateway.
 
     Detailed Functionality:
     - Queries the endpoint `/api/integrations/whatsapp/raw/schedules` via HTTP POST.
@@ -572,3 +572,4 @@ def add_candidate(
 fetchSchedules = fetch_schedules
 fetchInterviewResults = fetch_interview_results
 addCandidate = add_candidate
+
