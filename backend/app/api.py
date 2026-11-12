@@ -699,9 +699,12 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
     Raises:
         HTTPException(400): If the format cannot be parsed.
     """
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+
     time_clean = time_str.strip().upper()
     combined = f"{date_str.strip()} {time_clean}"
-    
+
     formats = [
         "%Y-%m-%d %I:%M %p",
         "%Y-%m-%d %I:%M%p",
@@ -712,13 +715,16 @@ def parse_interview_datetime(date_str: str, time_str: str) -> datetime:
     ]
     for fmt in formats:
         try:
-            return datetime.strptime(combined, fmt)
+            naive_dt = datetime.strptime(combined, fmt)
+            # Attach IST timezone so PostgreSQL stores the correct UTC equivalent
+            return naive_dt.replace(tzinfo=IST)
         except ValueError:
             pass
-            
+
     try:
         from dateutil import parser
-        return parser.parse(f"{date_str} {time_str}")
+        naive_dt = parser.parse(f"{date_str} {time_str}")
+        return naive_dt.replace(tzinfo=IST)
     except Exception:
         pass
 
@@ -835,7 +841,7 @@ def api_scheduling_confirm(
         tz = ZoneInfo(req.timezone or "Asia/Kolkata")
     except Exception:
         tz = ZoneInfo("Asia/Kolkata")
-    now_in_tz = datetime.now(tz).replace(tzinfo=None)
+    now_in_tz = datetime.now(tz)
     if dt <= now_in_tz:
         raise HTTPException(
             status_code=400,
@@ -1000,7 +1006,7 @@ def api_post_reschedule(token: str, req: RescheduleRequest, db: Session = Depend
         tz = ZoneInfo(req.timezone or "Asia/Kolkata")
     except Exception:
         tz = ZoneInfo("Asia/Kolkata")
-    now_in_tz = datetime.now(tz).replace(tzinfo=None)
+    now_in_tz = datetime.now(tz)
     if dt <= now_in_tz:
         raise HTTPException(
             status_code=400,

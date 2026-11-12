@@ -29,6 +29,7 @@ import re
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import urllib.error
 import urllib.parse
@@ -1045,7 +1046,7 @@ def _send_whatsapp_to_candidate(
             provider="NMVE",
             external_message_id=provider_message_id,
             status="SENT",
-            sent_at=datetime.utcnow(),
+            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
         )
 
         db.add(contact)
@@ -1432,7 +1433,7 @@ def handle_whatsapp_webhook(
             if target_contact:
                 if "DELIVER" in status_clean:
                     target_contact.status = "DELIVERED"
-                    target_contact.delivered_at = datetime.utcnow()
+                    target_contact.delivered_at = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
                 elif "FAIL" in status_clean or "UNDELIVER" in status_clean or data_dict.get("errorCode"):
                     target_contact.status = "FAILED"
                     err_msg = data_dict.get("errorMessage") or data_dict.get("error") or find_value(payload, ["errorMessage", "error", "error_message", "reason"]) or "Delivery failed"
@@ -1442,10 +1443,10 @@ def handle_whatsapp_webhook(
                         jc_rec.recruitment_status = "FAILED"
                 elif "READ" in status_clean:
                     target_contact.status = "READ"
-                    target_contact.read_at = datetime.utcnow()
+                    target_contact.read_at = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
                 elif "SENT" in status_clean:
                     target_contact.status = "SENT"
-                    target_contact.sent_at = target_contact.sent_at or datetime.utcnow()
+                    target_contact.sent_at = target_contact.sent_at or datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
                 db.commit()
                 print(f"WEBHOOK: Updated delivery status of contact {target_contact.id} to {target_contact.status}")
                 return {
@@ -1468,8 +1469,8 @@ def handle_whatsapp_webhook(
                             provider="NMVE",
                             external_message_id=provider_message_id,
                             status="FAILED" if is_failed else ("DELIVERED" if is_delivered else "SENT"),
-                            sent_at=datetime.utcnow(),
-                            delivered_at=datetime.utcnow() if is_delivered else None,
+                            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
+                            delivered_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) if is_delivered else None,
                         )
                         db.add(new_contact)
                         if is_failed:
@@ -1568,7 +1569,7 @@ def handle_whatsapp_webhook(
         provider="NMVE",
         external_message_id=provider_message_id,
         status="REPLIED",
-        responded_at=datetime.utcnow(),
+        responded_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
     )
     db.add(inbound)
     db.commit()
@@ -1605,7 +1606,7 @@ def handle_whatsapp_webhook(
                     message="Interview scheduling link sent",
                     provider="NMVE",
                     status="SENT",
-                    sent_at=datetime.utcnow(),
+                    sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
                 )
             )
             db.commit()
@@ -1630,7 +1631,7 @@ def handle_whatsapp_webhook(
                 message=ack_msg,
                 provider="NMVE",
                 status="SENT" if sent else "FAILED",
-                sent_at=datetime.utcnow() if sent else None,
+                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) if sent else None,
             )
         )
         db.commit()
@@ -1652,7 +1653,7 @@ def handle_whatsapp_webhook(
                 message=clarification,
                 provider="NMVE",
                 status="SENT" if sent else "FAILED",
-                sent_at=datetime.utcnow() if sent else None,
+                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) if sent else None,
             )
         )
         db.commit()
@@ -1777,7 +1778,7 @@ def schedule_candidate_interview(
             message=message,
             provider="NMVE",
             status="SENT" if sent else "FAILED",
-            sent_at=datetime.utcnow() if sent else None,
+            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) if sent else None,
         )
     )
     db.commit()
@@ -2324,7 +2325,7 @@ def _is_automate_yes(val) -> bool:
     return s in ("yes", "y", "true", "1", "auto")
 
 
-def send_naukri_outreach_array(
+def send_naukri_outreach_array( 
     db: Session,
     job_id: UUID | None = None,
     candidates: list[dict] | None = None,
@@ -2333,7 +2334,6 @@ def send_naukri_outreach_array(
     automate: str | bool | None = "yes",
 ) -> dict:
     """Process an array of candidate records imported from Naukri, ATS, or recruiter spreadsheets.
-
     Detailed End-to-End Workflow:
     1. Requisition & Entity Upsert:
        - If `job_id` is provided, attaches candidates to that job; otherwise dynamically finds or
@@ -2502,7 +2502,7 @@ def send_naukri_outreach_array(
                 message="Skipped: Invalid phone number (<10 digits or incomplete)",
                 provider="NMVE",
                 status="INVALID_PHONE",
-                sent_at=datetime.utcnow(),
+                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
             )
             db.add(skipped_contact)
             db.commit()
@@ -2652,7 +2652,7 @@ def send_naukri_outreach_array(
                 message=f"Failed to send template {template_name}: {response_body}",
                 provider="NMVE",
                 status="FAILED",
-                sent_at=datetime.utcnow(),
+                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
             )
             db.add(failed_contact)
             job_candidate.recruitment_status = "FAILED"
@@ -2680,8 +2680,8 @@ def send_naukri_outreach_array(
             provider="NMVE",
             external_message_id=provider_message_id,
             status="DELIVERED",
-            sent_at=datetime.utcnow(),
-            delivered_at=datetime.utcnow(),
+            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
+            delivered_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
         )
         db.add(contact)
 
@@ -2897,7 +2897,7 @@ def send_pending_outreach_candidates(
                 message=f"Failed to send template {template_name}: {response_body}",
                 provider="NMVE",
                 status="FAILED",
-                sent_at=datetime.utcnow(),
+                sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
             )
             db.add(failed_contact)
             jc.recruitment_status = "FAILED"
@@ -2922,8 +2922,8 @@ def send_pending_outreach_candidates(
             provider="NMVE",
             external_message_id=provider_message_id,
             status="DELIVERED",
-            sent_at=datetime.utcnow(),
-            delivered_at=datetime.utcnow(),
+            sent_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
+            delivered_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
         )
         db.add(contact)
         jc.recruitment_status = "CONTACTED"

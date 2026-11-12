@@ -85,8 +85,15 @@ def check_interview_reminders():
             if not candidate or not candidate.phone:
                 continue
 
-            # Strip tzinfo to compare direct wall-clock times
-            sched = jc.interview_scheduled_at.replace(tzinfo=None)
+            # Convert UTC-aware timestamp from DB to IST wall-clock time (naive) for comparison
+            IST = ZoneInfo("Asia/Kolkata")
+            raw_sched = jc.interview_scheduled_at
+            if raw_sched.tzinfo is not None:
+                # DB returned UTC-aware datetime → convert to IST then strip tzinfo
+                sched = raw_sched.astimezone(IST).replace(tzinfo=None)
+            else:
+                # Already naive (stored without tz info) → treat as IST directly
+                sched = raw_sched
 
             # Target times for exact reminder dispatches
             target_24h = sched - datetime.timedelta(hours=24)
@@ -143,7 +150,7 @@ def check_interview_reminders():
                                 message=msg,
                                 provider="NMVE",
                                 status="SENT",
-                                sent_at=datetime.datetime.utcnow(),
+                                sent_at=datetime.datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
                             )
                         )
                         db.commit()
@@ -195,7 +202,7 @@ def check_interview_reminders():
                                 message=msg,
                                 provider="NMVE",
                                 status="SENT",
-                                sent_at=datetime.datetime.utcnow(),
+                                sent_at=datetime.datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
                             )
                         )
                         db.commit()
