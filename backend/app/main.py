@@ -5,15 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from .api import router
-from .database import engine
+from .database import engine, ensure_ist_datetime_columns
 from .models import Base
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create missing tables for a fresh development database.
-    # Existing tables/columns are NOT altered by create_all().
     Base.metadata.create_all(bind=engine)
+<<<<<<< HEAD
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -25,6 +25,9 @@ async def lifespan(app: FastAPI):
                 "CREATE INDEX IF NOT EXISTS ix_candidates_requisition_id ON candidates (requisition_id)"
             )
         )
+=======
+    ensure_ist_datetime_columns()
+>>>>>>> 5bf29f0c34204d841d2af0d05f6436ce3d3410d8
     
     import asyncio
     from .scheduler import check_interview_reminders

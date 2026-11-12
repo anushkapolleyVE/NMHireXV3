@@ -15,6 +15,7 @@ This module defines the relational database schema representing the entire recru
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Boolean,
@@ -28,6 +29,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def ist_now() -> datetime:
+    """Return current wall-clock time in IST (Asia/Kolkata) as a naive datetime."""
+    return datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -74,14 +80,14 @@ class User(Base):
         doc="Bcrypt-hashed password string."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        doc="Timestamp when user was created."
+        DateTime(timezone=False), default=ist_now,
+        doc="Timestamp when user was created (IST)."
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        doc="Timestamp when user was last updated."
+        DateTime(timezone=False),
+        default=ist_now,
+        onupdate=ist_now,
+        doc="Timestamp when user was last updated (IST)."
     )
 
 
@@ -128,14 +134,14 @@ class Job(Base):
         doc="External requisition identifier mapped to gateway systems."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        doc="Timestamp when the job opening was created."
+        DateTime(timezone=False), default=ist_now,
+        doc="Timestamp when the job opening was created (IST)."
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        doc="Timestamp when the job opening was last updated."
+        DateTime(timezone=False),
+        default=ist_now,
+        onupdate=ist_now,
+        doc="Timestamp when the job opening was last updated (IST)."
     )
 
 
@@ -204,14 +210,14 @@ class Candidate(Base):
         doc="Parsed structured profile data (skills, history, education)."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        doc="Timestamp when candidate was first registered in NM-HireX."
+        DateTime(timezone=False), default=ist_now,
+        doc="Timestamp when candidate was first registered in NM-HireX (IST)."
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        doc="Timestamp when candidate profile was last updated."
+        DateTime(timezone=False),
+        default=ist_now,
+        onupdate=ist_now,
+        doc="Timestamp when candidate profile was last updated (IST)."
     )
 
 
@@ -268,8 +274,8 @@ class JobCandidate(Base):
         doc="Numerical ranking position among applicants for this job."
     )
     interview_scheduled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        doc="Confirmed date and time of the candidate interview appointment."
+        DateTime(timezone=False),
+        doc="Confirmed date and time of the candidate interview appointment stored in IST (Asia/Kolkata)."
     )
     interview_link: Mapped[str | None] = mapped_column(
         Text,
@@ -304,14 +310,14 @@ class JobCandidate(Base):
         doc="Atomic flag indicating if the 1-hour WhatsApp reminder was dispatched."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        doc="Timestamp when candidate was associated with the job."
+        DateTime(timezone=False), default=ist_now,
+        doc="Timestamp when candidate was associated with the job (IST)."
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        doc="Timestamp when status was last modified."
+        DateTime(timezone=False),
+        default=ist_now,
+        onupdate=ist_now,
+        doc="Timestamp when status was last modified (IST)."
     )
 
     __table_args__ = (
@@ -367,20 +373,20 @@ class CandidateContact(Base):
         doc="Delivery status ('SENT', 'DELIVERED', 'READ', 'FAILED', 'RECEIVED')."
     )
     sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        doc="Timestamp when message was dispatched to the provider."
+        DateTime(timezone=False),
+        doc="Timestamp when message was dispatched to the provider (IST)."
     )
     delivered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        doc="Timestamp when recipient device acknowledged delivery."
+        DateTime(timezone=False),
+        doc="Timestamp when recipient device acknowledged delivery (IST)."
     )
     read_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        doc="Timestamp when candidate opened and read the message."
+        DateTime(timezone=False),
+        doc="Timestamp when candidate opened and read the message (IST)."
     )
     responded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        doc="Timestamp when candidate sent a reply."
+        DateTime(timezone=False),
+        doc="Timestamp when candidate sent a reply (IST)."
     )
     response_text: Mapped[str | None] = mapped_column(
         Text,
@@ -391,8 +397,8 @@ class CandidateContact(Base):
         doc="Evaluated intent classification ('INTERESTED', 'NOT_INTERESTED', 'UNKNOWN')."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        doc="Timestamp when this contact record was created."
+        DateTime(timezone=False), default=ist_now,
+        doc="Timestamp when this contact record was created (IST)."
     )
 
 

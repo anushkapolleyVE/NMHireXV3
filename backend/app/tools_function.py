@@ -55,6 +55,16 @@ WHATSAPP_STAGE_NUMBERS = [
 ]
 
 
+IST_ZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _to_naive_ist(dt: datetime) -> datetime:
+    """Normalize a datetime to naive IST (Asia/Kolkata) wall-clock time."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(IST_ZONE).replace(tzinfo=None)
+    return dt
+
+
 # ============================================================
 # QUERY & DASHBOARD FUNCTIONS
 # ============================================================
@@ -462,7 +472,7 @@ def get_user_dashboard(db: Session, user_id: UUID) -> dict:
 
             if len(recent_candidates) < 40:
                 scheduled_str = (
-                    jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                    _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                     if jc.interview_scheduled_at
                     else None
                 )
@@ -1459,7 +1469,7 @@ def _classify_whatsapp_response(message: str) -> str:
     text_value = (message or "").strip().lower()
 
     negative_patterns = [
-        r"\bnot interested\b",
+        r"\b\b",
         r"\bno thanks\b",
         r"\bdo not want\b",
         r"\bdon't want\b",
@@ -1827,8 +1837,9 @@ def handle_whatsapp_webhook(
         db.commit()
 
         ack_msg = (
-            "Thank you for letting us know! We appreciate your response and "
-            "will keep your profile in mind for future opportunities. Best wishes!"
+            "Thank you for the update! 😊 We truly appreciate your time and consideration."
+             "We will keep your profile on record for future opportunities that align with your experience and qualifications."
+             "Wishing you continued success in your professional journey! 🌟"
         )
         sent = _send_whatsapp_text_message(
             raw_phone=target_phone,
@@ -1926,6 +1937,9 @@ def schedule_candidate_interview(
 
     if job_candidate.recruitment_status == "NOT_INTERESTED":
         raise ValueError("Candidate is not interested")
+
+    # Always store and format interview_scheduled_at in IST (naive wall-clock time)
+    scheduled_at = _to_naive_ist(scheduled_at)
 
     import uuid
     from .config import settings
@@ -2116,7 +2130,7 @@ def get_outreach_candidates(
             "delivery_status": delivery_status,
             "error_message": latest_outbound.message if (latest_outbound and c_status == "FAILED") else None,
             "interview_scheduled_at": (
-                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                 if jc.interview_scheduled_at
                 else None
             ),
@@ -2386,7 +2400,7 @@ def get_all_candidates(db: Session, user_id: UUID) -> list[dict]:
             "stage": jc.recruitment_status,
             "interview_link": jc.interview_link or interview_link,
             "interview_scheduled_at": (
-                jc.interview_scheduled_at.strftime("%Y-%m-%dT%H:%M:%S")
+                _to_naive_ist(jc.interview_scheduled_at).strftime("%Y-%m-%dT%H:%M:%S")
                 if jc.interview_scheduled_at
                 else None
             ),
