@@ -1465,7 +1465,7 @@ def _classify_whatsapp_response(message: str) -> str:
     text_value = (message or "").strip().lower()
 
     negative_patterns = [
-        r"\bnot interested\b",
+        r"\b\b",
         r"\bno thanks\b",
         r"\bdo not want\b",
         r"\bdon't want\b",
@@ -1833,8 +1833,9 @@ def handle_whatsapp_webhook(
         db.commit()
 
         ack_msg = (
-            "Thank you for letting us know! We appreciate your response and "
-            "will keep your profile in mind for future opportunities. Best wishes!"
+            "Thank you for the update! 😊 We truly appreciate your time and consideration."
+             "We will keep your profile on record for future opportunities that align with your experience and qualifications."
+             "Wishing you continued success in your professional journey! 🌟"
         )
         sent = _send_whatsapp_text_message(
             raw_phone=target_phone,
